@@ -1,0 +1,264 @@
+using ShmViewer.Core.Model;
+using ShmViewer.ViewModels;
+using System.Text;
+
+namespace ShmViewer.Core.Mapper;
+
+public class DataMapper
+{
+    private readonly TypeDatabase _db;
+
+    public DataMapper(TypeDatabase db) => _db = db;
+
+    public TreeNodeViewModel Map(byte[] data, TypeInfo rootType)
+    {
+        var root = new TreeNodeViewModel
+        {
+            Name = rootType.Name,
+            TypeName = rootType.Name,
+            Offset = 0,
+            Size = rootType.TotalSize,
+            Value = string.Empty
+        };
+
+        BuildChildren(root, data, rootType, 0);
+        return root;
+    }
+
+    private void BuildChildren(TreeNodeViewModel parent, byte[] data, TypeInfo typeInfo, int baseOffset)
+    {
+        foreach (var member in typeInfo.Members)
+        {
+            if (member.ArrayCount > 1)
+            {
+                var arrayNode = BuildArrayNode(data, member, baseOffset);
+                parent.Children.Add(arrayNode);
+            }
+            else
+            {
+                var node = BuildNode(data, member, baseOffset);
+                parent.Children.Add(node);
+            }
+        }
+    }
+
+    private TreeNodeViewModel BuildArrayNode(byte[] data, MemberInfo member, int baseOffset)
+    {
+        var elemSize = member.Size / member.ArrayCount;
+        var node = new TreeNodeViewModel
+        {
+            Name = member.Name,
+            TypeName = $"{member.TypeName}[{member.ArrayCount}]",
+            Offset = baseOffset + member.Offset,
+            Size = member.Size,
+            IsSpare = member.IsSpare
+        };
+
+        // char[] → show as string
+        if (member.Primitive == PrimitiveKind.Char || member.Primitive == PrimitiveKind.UChar)
+        {
+            node.Value = ReadCharArray(data, baseOffset + member.Offset, member.Size, member.IsSpare);
+            return node;
+        }
+
+        // struct/primitive array → expand as [0], [1], ...
+        for (int i = 0; i < member.ArrayCount; i++)
+        {
+            var elemOffset = baseOffset + member.Offset + (i * elemSize);
+            var elem = new MemberInfo
+            {
+                Name = $"[{i}]",
+                TypeName = member.TypeName,
+                ResolvedType = member.ResolvedType,
+                ResolvedEnum = member.ResolvedEnum,
+                Primitive = member.Primitive,
+                IsPointer = member.IsPointer,
+                Offset = elemOffset - baseOffset,
+                Size = elemSize,
+                ArrayCount = 1,
+                BitFieldWidth = member.BitFieldWidth,
+                BitFieldOffset = member.BitFieldOffset
+            };
+            node.Children.Add(BuildNode(data, elem, baseOffset));
+        }
+        return node;
+    }
+
+    private TreeNodeViewModel BuildNode(byte[] data, MemberInfo member, int baseOffset)
+    {
+        var absOffset = baseOffset + member.Offset;
+        var node = new TreeNodeViewModel
+        {
+            Name = member.Name,
+            TypeName = FormatTypeName(member),
+            Offset = absOffset,
+            Size = member.Size,
+            IsSpare = member.IsSpare,
+            MemberInfo = member
+        };
+
+        if (member.ResolvedType != null && !member.IsPointer)
+        {
+            // Struct/Union → expand children
+            node.Value = string.Empty;
+            BuildChildren(node, data, member.ResolvedType, absOffset);
+        }
+        else
+        {
+            node.Value = ReadValue(data, member, absOffset);
+        }
+
+        return node;
+    }
+
+    private string FormatTypeName(MemberInfo m)
+    {
+        if (m.ArrayCount > 1) return $"{m.TypeName}[{m.ArrayCount}]";
+        if (m.IsPointer) return $"{m.TypeName}*";
+        if (m.BitFieldWidth > 0) return $"{m.TypeName} : {m.BitFieldWidth}";
+        return m.TypeName;
+    }
+
+    public string ReadValue(byte[] data, MemberInfo member, int absOffset)
+    {
+        if (absOffset < 0 || absOffset >= data.Length) return "???";
+
+        if (member.IsPointer)
+            return ReadPointer(data, absOffset);
+
+        if (member.BitFieldWidth > 0)
+            return ReadBitField(data, member, absOffset).ToString();
+
+        if (member.ResolvedEnum != null)
+            return ReadEnum(data, member, absOffset);
+
+        if (member.ArrayCount > 1 &&
+            (member.Primitive == PrimitiveKind.Char || member.Primitive == PrimitiveKind.UChar))
+            return ReadCharArray(data, absOffset, member.Size, member.IsSpare);
+
+        return member.Primitive switch
+        {
+            PrimitiveKind.Char => ReadChar(data, absOffset),
+            PrimitiveKind.UChar => SafeRead(data, absOffset, 1) is { } b ? b[0].ToString() : "???",
+            PrimitiveKind.Short => SafeRead(data, absOffset, 2) is { } s ? BitConverter.ToInt16(s).ToString() : "???",
+            PrimitiveKind.UShort => SafeRead(data, absOffset, 2) is { } us ? BitConverter.ToUInt16(us).ToString() : "???",
+            PrimitiveKind.Int => SafeRead(data, absOffset, 4) is { } i ? BitConverter.ToInt32(i).ToString() : "???",
+            PrimitiveKind.UInt => SafeRead(data, absOffset, 4) is { } ui ? BitConverter.ToUInt32(ui).ToString() : "???",
+            PrimitiveKind.Long => SafeRead(data, absOffset, 4) is { } l ? BitConverter.ToInt32(l).ToString() : "???",
+            PrimitiveKind.ULong => SafeRead(data, absOffset, 4) is { } ul ? BitConverter.ToUInt32(ul).ToString() : "???",
+            PrimitiveKind.LongLong => SafeRead(data, absOffset, 8) is { } ll ? BitConverter.ToInt64(ll).ToString() : "???",
+            PrimitiveKind.ULongLong => SafeRead(data, absOffset, 8) is { } ull ? BitConverter.ToUInt64(ull).ToString() : "???",
+            PrimitiveKind.Float => SafeRead(data, absOffset, 4) is { } f ? BitConverter.ToSingle(f).ToString("G6") : "???",
+            PrimitiveKind.Double => SafeRead(data, absOffset, 8) is { } d ? BitConverter.ToDouble(d).ToString("G10") : "???",
+            PrimitiveKind.Bool => SafeRead(data, absOffset, 1) is { } bl ? (bl[0] != 0 ? "true" : "false") : "???",
+            PrimitiveKind.WChar => ReadWChar(data, absOffset),
+            PrimitiveKind.Pointer => ReadPointer(data, absOffset),
+            _ => ReadHexDump(data, absOffset, Math.Min(member.Size, 16))
+        };
+    }
+
+    private string ReadChar(byte[] data, int offset)
+    {
+        if (offset >= data.Length) return "???";
+        var b = data[offset];
+        return b is >= 32 and < 127 ? $"'{(char)b}' ({b})" : b.ToString();
+    }
+
+    private string ReadWChar(byte[] data, int offset)
+    {
+        var bytes = SafeRead(data, offset, 2);
+        if (bytes == null) return "???";
+        var c = BitConverter.ToChar(bytes);
+        return c is >= ' ' and < (char)127 ? $"'{c}' ({(int)c})" : ((int)c).ToString();
+    }
+
+    private string ReadPointer(byte[] data, int offset)
+    {
+        var bytes = SafeRead(data, offset, 8);
+        if (bytes == null) return "???";
+        var addr = BitConverter.ToInt64(bytes);
+        return $"0x{addr:X16}";
+    }
+
+    private string ReadEnum(byte[] data, MemberInfo member, int offset)
+    {
+        var bytes = SafeRead(data, offset, Math.Min(member.Size, 8));
+        if (bytes == null) return "???";
+        long value = member.Size switch
+        {
+            1 => bytes[0],
+            2 => BitConverter.ToInt16(bytes),
+            8 => BitConverter.ToInt64(bytes),
+            _ => BitConverter.ToInt32(bytes)
+        };
+        var name = member.ResolvedEnum!.FindName(value);
+        return name != null ? $"{name}({value})" : value.ToString();
+    }
+
+    private long ReadBitField(byte[] data, MemberInfo member, int offset)
+    {
+        var storageSize = Math.Min(member.Size > 0 ? member.Size : 4, 8);
+        var bytes = SafeRead(data, offset, storageSize);
+        if (bytes == null) return 0;
+
+        ulong raw = storageSize switch
+        {
+            1 => bytes[0],
+            2 => BitConverter.ToUInt16(bytes),
+            8 => BitConverter.ToUInt64(bytes),
+            _ => BitConverter.ToUInt32(bytes)
+        };
+
+        var mask = (1UL << member.BitFieldWidth) - 1;
+        return (long)((raw >> member.BitFieldOffset) & mask);
+    }
+
+    private string ReadCharArray(byte[] data, int offset, int size, bool isSpare)
+    {
+        if (offset < 0 || offset >= data.Length) return "???";
+        var available = Math.Min(size, data.Length - offset);
+        var slice = data.AsSpan(offset, available);
+
+        if (isSpare) return ReadHexDump(data, offset, available);
+
+        // Find null terminator
+        int nullIdx = slice.IndexOf((byte)0);
+        int strLen = nullIdx >= 0 ? nullIdx : available;
+
+        bool isValidString = true;
+        for (int i = 0; i < strLen; i++)
+        {
+            if (slice[i] < 32 && slice[i] != '\t' && slice[i] != '\n' && slice[i] != '\r')
+            {
+                isValidString = false;
+                break;
+            }
+        }
+
+        if (isValidString)
+            return $"\"{Encoding.ASCII.GetString(slice[..strLen])}\"";
+
+        return ReadHexDump(data, offset, available);
+    }
+
+    public static string ReadHexDump(byte[] data, int offset, int count)
+    {
+        if (offset < 0 || offset >= data.Length) return "???";
+        var available = Math.Min(count, data.Length - offset);
+        var sb = new StringBuilder();
+        for (int i = 0; i < available; i++)
+        {
+            if (i > 0 && i % 8 == 0) sb.Append(' ');
+            sb.Append($"{data[offset + i]:X2} ");
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    private static byte[]? SafeRead(byte[] data, int offset, int count)
+    {
+        if (offset < 0 || offset + count > data.Length) return null;
+        var buf = new byte[count];
+        Array.Copy(data, offset, buf, 0, count);
+        return buf;
+    }
+}

@@ -1,0 +1,49 @@
+<Window x:Class="ShmViewer.Views.Dialogs.LoadFailDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Load 실패 - 미발견 타입 목록"
+        Width="520" Height="360"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        Background="#1E1E1E">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#D4D4D4"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="❌ 다음 타입들을 헤더 파일에서 찾을 수 없습니다:"
+                   FontSize="13" FontWeight="Bold" Foreground="#F44747" Margin="0,0,0,8"/>
+
+        <Border Grid.Row="1" Background="#2D2D2D" BorderBrush="#444" BorderThickness="1">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ItemsControl x:Name="TypeList" Margin="8">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" Margin="0,2" FontSize="12"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <TextBlock Grid.Row="2" Margin="0,10,0,0" FontSize="12" Foreground="#DCDCAA"
+                   Text="💡 해당 타입이 정의된 헤더 파일을 추가로 업로드한 후 다시 Load하세요."
+                   TextWrapping="Wrap"/>
+
+        <Button Grid.Row="3" Content="확인" Width="80" HorizontalAlignment="Right"
+                Margin="0,10,0,0" Click="OkButton_Click"
+                Background="#0E639C" Foreground="White" BorderThickness="0"
+                Padding="0,6" Cursor="Hand"/>
+    </Grid>
+</Window>
