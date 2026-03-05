@@ -420,14 +420,14 @@ public class HeaderParserService
         return 0;
     }
 
-    // Post-processing: 파싱 완료 후 전방 참조 등으로 누락된 ResolvedType/Size 보완
+    // Post-processing: 파싱 완료 후 전방 참조 해소 + bottom-up TotalSize 재계산
     private static void PostProcessSizes(TypeDatabase db)
     {
+        // Step 1: 전방 참조 해소 (ResolvedType 설정만, Size 갱신은 Step 2에서)
         foreach (var typeInfo in db.Structs.Values)
         {
             foreach (var member in typeInfo.Members)
             {
-                // ResolvedType이 null이고 primitive도 아닌 경우 다시 struct 탐색
                 if (member.ResolvedType == null
                     && member.Primitive == PrimitiveKind.None
                     && !member.IsPointer
@@ -435,20 +435,41 @@ public class HeaderParserService
                 {
                     var resolved = db.ResolveType(member.TypeName);
                     if (resolved != null)
-                    {
                         member.ResolvedType = resolved;
-                        member.Size = resolved.TotalSize * member.ArrayCount;
-                    }
-                }
-
-                // ResolvedType이 있는데 Size가 기대값과 다르면 강제 보완
-                if (member.ResolvedType != null && !member.IsPointer)
-                {
-                    var expected = member.ResolvedType.TotalSize * member.ArrayCount;
-                    if (expected > 0 && member.Size != expected)
-                        member.Size = expected;
                 }
             }
         }
+
+        // Step 2: bottom-up TotalSize 재계산 (DFS post-order)
+        var processed = new HashSet<string>();
+        foreach (var name in db.Structs.Keys.ToList())
+            RecomputeTypeSize(name, db, processed);
+    }
+
+    private static void RecomputeTypeSize(string name, TypeDatabase db, HashSet<string> processed)
+    {
+        if (!processed.Add(name)) return; // 이미 처리됨 또는 순환 방지
+        if (!db.Structs.TryGetValue(name, out var typeInfo)) return;
+
+        // 의존 struct 먼저 처리 (post-order DFS)
+        foreach (var member in typeInfo.Members)
+        {
+            if (member.ResolvedType != null && !member.IsPointer)
+            {
+                RecomputeTypeSize(member.ResolvedType.Name, db, processed);
+                var expected = member.ResolvedType.TotalSize * member.ArrayCount;
+                if (expected > 0)
+                    member.Size = expected;
+            }
+        }
+
+        if (typeInfo.Members.Count == 0) return; // 빈 구조체는 Clang 값 유지
+
+        int computed = typeInfo.IsUnion
+            ? typeInfo.Members.Max(m => m.Size)
+            : typeInfo.Members.Max(m => m.Offset + m.Size);
+
+        if (computed > 0)
+            typeInfo.TotalSize = computed;
     }
 }
