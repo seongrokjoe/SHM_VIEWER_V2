@@ -188,23 +188,9 @@
                                            Foreground="{Binding IsStatusError, Converter={x:Static local:BoolToErrorColorConverter.Instance}}"/>
                                 <TextBlock Text="  |  마지막 갱신: " Foreground="#666" FontSize="11" Margin="10,0,0,0"/>
                                 <TextBlock Text="{Binding LastRefreshTime}" Foreground="#666" FontSize="11"/>
-                                <Button Content="Run" Margin="20,0,6,0"
-                                        Command="{Binding RunCommand}">
-                                    <Button.Style>
-                                        <Style TargetType="Button" BasedOn="{StaticResource DarkBtn}">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <MultiDataTrigger>
-                                                    <MultiDataTrigger.Conditions>
-                                                        <Condition Binding="{Binding IsTreeBuilt}" Value="True"/>
-                                                        <Condition Binding="{Binding IsRunning}" Value="False"/>
-                                                    </MultiDataTrigger.Conditions>
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </MultiDataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Button.Style>
-                                </Button>
+                                <Button Content="Run" Style="{StaticResource DarkBtn}" Margin="20,0,6,0"
+                                        Command="{Binding RunCommand}"
+                                        Visibility="{Binding CanRun, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
                                 <Button Content="Stop" Style="{StaticResource DangerBtn}" Margin="20,0,6,0"
                                         Command="{Binding StopCommand}"
                                         Visibility="{Binding IsRunning, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
@@ -275,7 +261,7 @@
                                                      FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
                                                      Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
                                             <!-- 수정 2: SIZE(+offset) 통합 -->
-                                            <TextBox Grid.Column="2" Text="{Binding SizeDisplay}" IsReadOnly="True"
+                                            <TextBox Grid.Column="2" Text="{Binding SizeDisplay, Mode=OneWay}" IsReadOnly="True"
                                                      Background="Transparent" BorderThickness="0" IsTabStop="False"
                                                      FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
                                                      Foreground="#B5CEA8"/>

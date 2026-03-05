@@ -23,8 +23,15 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _shmName = string.Empty;
     [ObservableProperty] private string _structName = string.Empty;
     [ObservableProperty] private bool _isLoaded;
-    [ObservableProperty] private bool _isTreeBuilt;
-    [ObservableProperty] private bool _isRunning;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRun))]
+    private bool _isTreeBuilt;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRun))]
+    private bool _isRunning;
+
+    public bool CanRun => IsTreeBuilt && !IsRunning;
     [ObservableProperty] private string _statusText = "준비";
     [ObservableProperty] private bool _isStatusError;
     [ObservableProperty] private string _lastRefreshTime = "-";
