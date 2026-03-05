@@ -24,6 +24,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _structName = string.Empty;
     [ObservableProperty] private bool _isLoaded;
     [ObservableProperty] private string _statusText = "준비";
+    [ObservableProperty] private bool _isStatusError;
     [ObservableProperty] private string _lastRefreshTime = "-";
     [ObservableProperty] private RefreshMode _refreshMode = RefreshMode.Ms500;
     [ObservableProperty] private bool _isManualMode;
@@ -59,6 +60,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
             RootNodes.Add(root);
 
             IsLoaded = true;
+            IsStatusError = false;
             StatusText = $"✅ Loaded | Total Size: {_rootType.TotalSize} bytes";
             TabTitle = ShmName;
             LastRefreshTime = DateTime.Now.ToString("HH:mm:ss.fff");
@@ -66,10 +68,12 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         }
         catch (ShmNotFoundException ex)
         {
+            IsStatusError = true;
             StatusText = $"❌ {ex.Message}";
         }
         catch (Exception ex)
         {
+            IsStatusError = true;
             StatusText = $"❌ 오류: {ex.Message}";
         }
     }

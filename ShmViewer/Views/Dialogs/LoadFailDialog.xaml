@@ -30,7 +30,9 @@
                 <ItemsControl x:Name="TypeList" Margin="8">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding}" Margin="0,2" FontSize="12"/>
+                            <TextBox Text="{Binding}" IsReadOnly="True" Background="Transparent"
+                                     Foreground="White" BorderThickness="0" FontFamily="Consolas"
+                                     FontSize="12" Margin="0,2" IsTabStop="False"/>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>

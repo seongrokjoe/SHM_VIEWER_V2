@@ -1,5 +1,6 @@
 @echo off
-setlocal EnableDelayedExpansion
+@chcp 65001 >nul
+set DOTNET_CLI_UI_LANGUAGE=en
 
 echo ============================================================
 echo  SHM_VIEWER Release Build
@@ -11,11 +12,14 @@ set PROJECT=%ROOT%ShmViewer\ShmViewer.csproj
 set DIST=%ROOT%dist
 set PUBLISH_DIR=%DIST%\ShmViewer
 
-:: ── dotnet CLI 확인 ────────────────────────────────────────
-where dotnet >nul 2>&1
+:: ── dotnet CLI 경로 탐색 (VS2022 설치 경로 우선) ─────────
+set DOTNET=dotnet
+if exist "%ProgramFiles%\dotnet\dotnet.exe" set DOTNET="%ProgramFiles%\dotnet\dotnet.exe"
+
+%DOTNET% --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] dotnet CLI를 찾을 수 없습니다.
-    echo         Visual Studio 2022 설치 후 다시 실행하세요.
+    echo         .NET SDK 설치 후 다시 실행하세요.
     pause & exit /b 1
 )
 
@@ -24,18 +28,12 @@ echo.
 echo [1/3] 이전 빌드 정리 중...
 if exist "%PUBLISH_DIR%" rmdir /s /q "%PUBLISH_DIR%"
 if exist "%DIST%\ShmViewer_Release.zip" del /q "%DIST%\ShmViewer_Release.zip"
+if not exist "%DIST%" mkdir "%DIST%"
 
-:: ── Publish (framework-dependent, win-x64) ─────────────────
+:: ── Publish (SingleFile, framework-dependent, win-x64) ────
 echo.
 echo [2/3] Release 빌드 및 Publish 중...
-dotnet publish "%PROJECT%" ^
-    --configuration Release ^
-    --runtime win-x64 ^
-    --self-contained false ^
-    --output "%PUBLISH_DIR%" ^
-    -p:PublishSingleFile=false ^
-    -p:DebugType=none ^
-    -p:DebugSymbols=false
+%DOTNET% publish "%PROJECT%" -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false -o "%PUBLISH_DIR%"
 if errorlevel 1 (
     echo [ERROR] 빌드 실패.
     pause & exit /b 1
@@ -50,9 +48,7 @@ if exist "%PUBLISH_DIR%\ShmViewer.pdb" del /q "%PUBLISH_DIR%\ShmViewer.pdb"
 :: ── ZIP 생성 (PowerShell) ───────────────────────────────────
 echo.
 echo [ZIP] 배포 패키지 압축 중...
-if not exist "%DIST%" mkdir "%DIST%"
-powershell -NoProfile -Command ^
-    "Compress-Archive -Path '%PUBLISH_DIR%\*' -DestinationPath '%DIST%\ShmViewer_Release.zip' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path '%PUBLISH_DIR%\*' -DestinationPath '%DIST%\ShmViewer_Release.zip' -Force"
 if errorlevel 1 (
     echo [WARN] ZIP 생성 실패. 폴더 배포본은 정상 생성됨.
 ) else (
@@ -65,14 +61,10 @@ echo ============================================================
 echo  빌드 완료
 echo ============================================================
 echo  폴더 배포본 : %PUBLISH_DIR%
-if exist "%DIST%\ShmViewer_Release.zip" (
-    echo  ZIP 패키지  : %DIST%\ShmViewer_Release.zip
-)
+echo  배포 파일   : ShmViewer.exe + libclang.dll + libClangSharp.dll
+if exist "%DIST%\ShmViewer_Release.zip" echo  ZIP 패키지  : %DIST%\ShmViewer_Release.zip
 echo.
-echo  배포 시 ShmViewer_Release.zip 을 대상 PC에 압축 해제 후
-echo  ShmViewer.exe 를 실행하세요.
-echo  (.NET 8 Desktop Runtime 이상 필요 - VS2022 설치 환경 기준 충족)
+echo  (.NET 8 Desktop Runtime 필요)
 echo ============================================================
 echo.
 pause
-endlocal

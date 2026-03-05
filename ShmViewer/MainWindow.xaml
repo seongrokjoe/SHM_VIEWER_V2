@@ -57,6 +57,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- ═══ Header File Panel ═══ -->
@@ -67,15 +68,27 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <StackPanel Grid.Row="0" Orientation="Horizontal">
-                    <TextBlock Text="헤더 파일" FontWeight="Bold" FontSize="13" Foreground="#9CDCFE" VerticalAlignment="Center"/>
-                    <Button Content="+ 파일 추가" Style="{StaticResource DarkBtn}" Margin="10,0,4,0"
-                            Command="{Binding AddHeaderFilesCommand}"/>
-                    <Button Content="전체 삭제" Style="{StaticResource DangerBtn}"
-                            Command="{Binding ClearAllHeaderFilesCommand}"/>
-                    <TextBlock Text="(헤더 파일을 창에 드래그&amp;드롭하거나 버튼으로 추가)"
-                               Foreground="#666" Margin="10,0,0,0" FontSize="11"/>
-                </StackPanel>
+                <!-- 상단: 헤더 파일 버튼(좌) + 검색(우) -->
+                <Grid Grid.Row="0">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                        <TextBlock Text="헤더 파일" FontWeight="Bold" FontSize="13" Foreground="#9CDCFE" VerticalAlignment="Center"/>
+                        <Button Content="+ 파일 추가" Style="{StaticResource DarkBtn}" Margin="10,0,4,0"
+                                Command="{Binding AddHeaderFilesCommand}"/>
+                        <Button Content="전체 삭제" Style="{StaticResource DangerBtn}"
+                                Command="{Binding ClearAllHeaderFilesCommand}"/>
+                        <TextBlock Text="(헤더 파일을 창에 드래그&amp;드롭하거나 버튼으로 추가)"
+                                   Foreground="#666" Margin="10,0,0,0" FontSize="11"/>
+                    </StackPanel>
+
+                    <!-- 검색 UI -->
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <TextBox x:Name="SearchBox" Width="200" Margin="0,0,4,0"
+                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 KeyDown="SearchBox_KeyDown"/>
+                        <Button Content="검색" Style="{StaticResource DarkBtn}"
+                                Command="{Binding SearchCommand}"/>
+                    </StackPanel>
+                </Grid>
 
                 <ItemsControl Grid.Row="1" ItemsSource="{Binding HeaderFiles}" Margin="0,6,0,0">
                     <ItemsControl.ItemsPanel>
@@ -104,9 +117,15 @@
             </Grid>
         </Border>
 
-        <!-- Parser Status -->
+        <!-- Parser Status + 미발견 타입 보기 버튼 -->
         <Border Grid.Row="1" Background="#1E1E1E" Padding="10,4" BorderBrush="#444" BorderThickness="0,0,0,1">
-            <TextBlock Text="{Binding ParserStatus}" Foreground="#608B4E" FontSize="11"/>
+            <Grid>
+                <TextBlock Text="{Binding ParserStatus}" Foreground="#608B4E" FontSize="11"
+                           HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                <Button Content="미발견 타입 보기" Style="{StaticResource DarkBtn}" HorizontalAlignment="Right"
+                        Command="{Binding ShowLastFailCommand}"
+                        Visibility="{Binding HasLastUnresolved, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+            </Grid>
         </Border>
 
         <!-- ═══ SHM Input ═══ -->
@@ -142,7 +161,7 @@
             <TabControl.ItemTemplate>
                 <DataTemplate DataType="{x:Type vm:ShmTabViewModel}">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding TabTitle}" Foreground="#D4D4D4"
+                        <TextBlock Text="{Binding TabTitle}" Foreground="Black"
                                    FontFamily="Consolas" FontSize="12" VerticalAlignment="Center"/>
                         <Button Content="✕" Background="Transparent" Foreground="#888"
                                 BorderThickness="0" Padding="6,0,0,0" FontSize="10"
@@ -165,7 +184,8 @@
                         <Border Grid.Row="0" Background="#252526" Padding="10,5"
                                 BorderBrush="#444" BorderThickness="0,0,0,1">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding StatusText}" FontSize="12"/>
+                                <TextBlock Text="{Binding StatusText}" FontSize="12"
+                                           Foreground="{Binding IsStatusError, Converter={x:Static local:BoolToErrorColorConverter.Instance}}"/>
                                 <TextBlock Text="  |  마지막 갱신: " Foreground="#666" FontSize="11" Margin="10,0,0,0"/>
                                 <TextBlock Text="{Binding LastRefreshTime}" Foreground="#666" FontSize="11"/>
                                 <Button Content="Unload" Style="{StaticResource DangerBtn}" Margin="20,0,6,0"
@@ -213,6 +233,11 @@
                                         <Setter Property="Background" Value="Transparent"/>
                                         <Setter Property="Foreground" Value="#D4D4D4"/>
                                         <Setter Property="Padding" Value="2,1"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
+                                                <Setter Property="Background" Value="#264F78"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
                                     </Style>
                                 </TreeView.Resources>
                                 <TreeView.ItemTemplate>
@@ -242,5 +267,71 @@
                 </DataTemplate>
             </TabControl.ContentTemplate>
         </TabControl>
+
+        <!-- ═══ 검색 결과 패널 ═══ -->
+        <Border Grid.Row="4" Background="#1E1E1E" BorderBrush="#444" BorderThickness="0,1,0,0"
+                Visibility="{Binding IsSearchPanelVisible, Converter={x:Static local:BoolToVisConverter.Instance}}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 검색 결과 헤더 -->
+                <Border Grid.Row="0" Background="#252526" Padding="10,4">
+                    <Grid>
+                        <TextBlock Text="검색 결과" Foreground="#9CDCFE" FontWeight="Bold"
+                                   HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        <Button Content="닫기" Style="{StaticResource DangerBtn}" HorizontalAlignment="Right"
+                                Command="{Binding CloseSearchCommand}"/>
+                    </Grid>
+                </Border>
+
+                <!-- DataGrid -->
+                <DataGrid Grid.Row="1" x:Name="SearchResultGrid"
+                          ItemsSource="{Binding SearchResults}"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          Background="#1E1E1E"
+                          Foreground="#D4D4D4"
+                          GridLinesVisibility="Horizontal"
+                          HorizontalGridLinesBrush="#333"
+                          BorderThickness="0"
+                          RowBackground="#1E1E1E"
+                          AlternatingRowBackground="#252526"
+                          HeadersVisibility="Column"
+                          CanUserResizeRows="False"
+                          MaxHeight="180"
+                          FontFamily="Consolas"
+                          FontSize="11"
+                          MouseDoubleClick="SearchResult_DoubleClick">
+                    <DataGrid.ColumnHeaderStyle>
+                        <Style TargetType="DataGridColumnHeader">
+                            <Setter Property="Background" Value="#2D2D2D"/>
+                            <Setter Property="Foreground" Value="#9CDCFE"/>
+                            <Setter Property="FontFamily" Value="Consolas"/>
+                            <Setter Property="FontSize" Value="11"/>
+                            <Setter Property="Padding" Value="6,4"/>
+                            <Setter Property="BorderBrush" Value="#444"/>
+                            <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                        </Style>
+                    </DataGrid.ColumnHeaderStyle>
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow">
+                            <Setter Property="FontFamily" Value="Consolas"/>
+                            <Setter Property="FontSize" Value="11"/>
+                            <Setter Property="Foreground" Value="#D4D4D4"/>
+                        </Style>
+                    </DataGrid.RowStyle>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="TAB" Binding="{Binding TabName}" Width="100"/>
+                        <DataGridTextColumn Header="경로" Binding="{Binding NodePath}" Width="*"/>
+                        <DataGridTextColumn Header="TYPE" Binding="{Binding TypeName}" Width="120"/>
+                        <DataGridTextColumn Header="VALUE" Binding="{Binding Value}" Width="150"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+        </Border>
     </Grid>
 </Window>

@@ -33,6 +33,26 @@ public class SpareColorConverter : IValueConverter
     public object ConvertBack(object v, Type t, object p, CultureInfo c) => throw new NotImplementedException();
 }
 
+public class BoolToErrorColorConverter : IValueConverter
+{
+    public static readonly BoolToErrorColorConverter Instance = new();
+    public object Convert(object value, Type t, object p, CultureInfo c) =>
+        value is true
+            ? new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47))
+            : new SolidColorBrush(Color.FromRgb(0xD4, 0xD4, 0xD4));
+    public object ConvertBack(object v, Type t, object p, CultureInfo c) => throw new NotImplementedException();
+}
+
+public class BoolToHighlightConverter : IValueConverter
+{
+    public static readonly BoolToHighlightConverter Instance = new();
+    public object Convert(object value, Type t, object p, CultureInfo c) =>
+        value is true
+            ? new SolidColorBrush(Color.FromRgb(0x26, 0x4F, 0x78))
+            : new SolidColorBrush(Colors.Transparent);
+    public object ConvertBack(object v, Type t, object p, CultureInfo c) => throw new NotImplementedException();
+}
+
 public class EnumToBoolConverter : IValueConverter
 {
     public static readonly EnumToBoolConverter Instance = new();

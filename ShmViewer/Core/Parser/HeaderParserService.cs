@@ -269,15 +269,15 @@ public class HeaderParserService
             return member;
         }
 
-        // Array
+        // Array (supports multi-dimensional: short arr[A][B] → ArrayCount = A*B)
         int arrayCount = 1;
         var elemType = memberType;
-        if (canonical.kind == CXTypeKind.CXType_ConstantArray)
+        var elemCanonical = canonical;
+        while (elemCanonical.kind == CXTypeKind.CXType_ConstantArray)
         {
-            arrayCount = (int)canonical.ArraySize;
-            elemType = canonical.ArrayElementType;
-            var elemSize = elemType.SizeOf;
-            member.Size = elemSize > 0 ? (int)(elemSize * arrayCount) : (int)sizeBytes;
+            arrayCount *= (int)elemCanonical.ArraySize;
+            elemType = elemCanonical.ArrayElementType;
+            elemCanonical = elemType.CanonicalType;
         }
         member.ArrayCount = arrayCount;
 
