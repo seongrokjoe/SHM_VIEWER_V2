@@ -36,17 +36,81 @@ public class DataMapper
     {
         foreach (var member in typeInfo.Members)
         {
-            if (member.ArrayCount > 1)
+            if (member.ArrayDims.Length > 1)
             {
-                var arrayNode = BuildArrayNode(data, member, baseOffset);
-                parent.Children.Add(arrayNode);
+                // 다차원 배열 → 계층 트리
+                parent.Children.Add(BuildMultiDimArrayNode(data, member, baseOffset, 0, 0));
+            }
+            else if (member.ArrayCount > 1)
+            {
+                parent.Children.Add(BuildArrayNode(data, member, baseOffset));
             }
             else
             {
-                var node = BuildNode(data, member, baseOffset);
-                parent.Children.Add(node);
+                parent.Children.Add(BuildNode(data, member, baseOffset));
             }
         }
+    }
+
+    // 다차원 배열을 계층적 트리 노드로 구성 (e.g. [2][3] → [0]→{[0],[1],[2]}, [1]→{[0],[1],[2]})
+    private TreeNodeViewModel BuildMultiDimArrayNode(
+        byte[] data, MemberInfo member, int baseOffset, int dimIdx, int flatBase)
+    {
+        var elemSize = member.ResolvedType?.TotalSize
+                       ?? TypeDatabase.GetPrimitiveSize(member.Primitive);
+        if (elemSize == 0) elemSize = member.ArrayCount > 0 ? member.Size / member.ArrayCount : 1;
+
+        // 현재 dim 노드
+        var dimSuffix = string.Concat(member.ArrayDims.Select(d => $"[{d}]"));
+        var node = new TreeNodeViewModel
+        {
+            Name = dimIdx == 0 ? member.Name : $"[{flatBase}]",
+            TypeName = $"{member.TypeName}{dimSuffix}",
+            Offset = baseOffset + member.Offset + flatBase * elemSize,
+            Size = member.ArrayDims.Skip(dimIdx).Aggregate(1, (a, b) => a * b) * elemSize,
+            IsSpare = member.IsSpare
+        };
+
+        int dimSize = member.ArrayDims[dimIdx];
+        // 현재 dim 아래의 stride (하위 차원 총 원소 수)
+        int stride = member.ArrayDims.Skip(dimIdx + 1).Aggregate(1, (a, b) => a * b);
+
+        bool isLastDim = dimIdx == member.ArrayDims.Length - 1;
+
+        for (int i = 0; i < dimSize; i++)
+        {
+            int childFlatBase = flatBase + i * stride;
+
+            if (isLastDim)
+            {
+                // 마지막 차원 → 실제 원소 노드
+                var elemMember = new MemberInfo
+                {
+                    Name = $"[{i}]",
+                    TypeName = member.TypeName,
+                    ResolvedType = member.ResolvedType,
+                    ResolvedEnum = member.ResolvedEnum,
+                    Primitive = member.Primitive,
+                    IsPointer = member.IsPointer,
+                    Offset = member.Offset + childFlatBase * elemSize,
+                    Size = elemSize,
+                    ArrayCount = 1,
+                    ArrayDims = Array.Empty<int>(),
+                    BitFieldWidth = member.BitFieldWidth,
+                    BitFieldOffset = member.BitFieldOffset
+                };
+                node.Children.Add(BuildNode(data, elemMember, baseOffset));
+            }
+            else
+            {
+                // 중간 차원 → 재귀
+                var childNode = BuildMultiDimArrayNode(data, member, baseOffset, dimIdx + 1, childFlatBase);
+                childNode.Name = $"[{i}]";
+                node.Children.Add(childNode);
+            }
+        }
+
+        return node;
     }
 
     private TreeNodeViewModel BuildArrayNode(byte[] data, MemberInfo member, int baseOffset)
@@ -89,6 +153,7 @@ public class DataMapper
                 Offset = elemOffset - baseOffset,
                 Size = elemSize,
                 ArrayCount = 1,
+                ArrayDims = Array.Empty<int>(),
                 BitFieldWidth = member.BitFieldWidth,
                 BitFieldOffset = member.BitFieldOffset
             };

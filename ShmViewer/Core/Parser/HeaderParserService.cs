@@ -33,6 +33,9 @@ public class HeaderParserService
                 File.Delete(tempFile);
         }
 
+        // Post-processing: 전방 참조 등으로 누락된 ResolvedType/Size 보완
+        PostProcessSizes(result.Database);
+
         return result;
     }
 
@@ -269,17 +272,37 @@ public class HeaderParserService
             return member;
         }
 
-        // Array (supports multi-dimensional: short arr[A][B] → ArrayCount = A*B)
-        int arrayCount = 1;
+        // Array (multi-dimensional 지원: short arr[A][B] → ArrayDims={A,B}, ArrayCount=A*B)
+        var dims = new List<int>();
         var elemType = memberType;
         var elemCanonical = canonical;
-        while (elemCanonical.kind == CXTypeKind.CXType_ConstantArray)
+
+        while (true)
         {
-            arrayCount *= (int)elemCanonical.ArraySize;
-            elemType = elemCanonical.ArrayElementType;
-            elemCanonical = elemType.CanonicalType;
+            if (elemCanonical.kind == CXTypeKind.CXType_ConstantArray)
+            {
+                dims.Add((int)elemCanonical.ArraySize);
+                elemType = elemType.ArrayElementType;      // 원본 타입 체인에서 추출 (spelling 보존)
+                elemCanonical = elemType.CanonicalType;
+            }
+            else if (elemCanonical.kind == CXTypeKind.CXType_VariableArray
+                  || elemCanonical.kind == CXTypeKind.CXType_DependentSizedArray)
+            {
+                // enum 상수 등 VLA: spelling에서 크기 해소 시도
+                var dim = TryResolveVlaDim(elemCanonical, db);
+                if (dim <= 0) break;
+                dims.Add(dim);
+                elemType = elemType.ArrayElementType;
+                elemCanonical = elemType.CanonicalType;
+            }
+            else
+            {
+                break;
+            }
         }
-        member.ArrayCount = arrayCount;
+
+        member.ArrayDims = dims.ToArray();
+        member.ArrayCount = dims.Count > 0 ? dims.Aggregate(1, (a, b) => a * b) : 1;
 
         ResolveElementType(member, elemType, db, unresolved, parentName);
         return member;
@@ -371,4 +394,61 @@ public class HeaderParserService
         CXTypeKind.CXType_Pointer => PrimitiveKind.Pointer,
         _ => PrimitiveKind.None
     };
+
+    // VLA/DependentSized 배열의 크기 표현식에서 enum 상수 또는 매크로 값 해소
+    private static int TryResolveVlaDim(CXType vla, TypeDatabase db)
+    {
+        // Clang VLA의 크기 표현식 spelling 시도
+        // 직접 접근이 제한되므로 spelling에서 추정
+        var spelling = vla.Spelling.ToString().Trim();
+
+        // 이미 숫자인 경우
+        if (int.TryParse(spelling, out var n) && n > 0)
+            return n;
+
+        // enum 멤버에서 검색
+        foreach (var enumInfo in db.Enums.Values)
+        {
+            if (enumInfo.Members.TryGetValue(spelling, out var val) && val > 0)
+                return (int)val;
+        }
+
+        // Defines(매크로)에서 검색
+        if (db.Defines.TryGetValue(spelling, out var def) && def > 0)
+            return (int)def;
+
+        return 0;
+    }
+
+    // Post-processing: 파싱 완료 후 전방 참조 등으로 누락된 ResolvedType/Size 보완
+    private static void PostProcessSizes(TypeDatabase db)
+    {
+        foreach (var typeInfo in db.Structs.Values)
+        {
+            foreach (var member in typeInfo.Members)
+            {
+                // ResolvedType이 null이고 primitive도 아닌 경우 다시 struct 탐색
+                if (member.ResolvedType == null
+                    && member.Primitive == PrimitiveKind.None
+                    && !member.IsPointer
+                    && !string.IsNullOrEmpty(member.TypeName))
+                {
+                    var resolved = db.ResolveType(member.TypeName);
+                    if (resolved != null)
+                    {
+                        member.ResolvedType = resolved;
+                        member.Size = resolved.TotalSize * member.ArrayCount;
+                    }
+                }
+
+                // ResolvedType이 있는데 Size가 기대값과 다르면 강제 보완
+                if (member.ResolvedType != null && !member.IsPointer)
+                {
+                    var expected = member.ResolvedType.TotalSize * member.ArrayCount;
+                    if (expected > 0 && member.Size != expected)
+                        member.Size = expected;
+                }
+            }
+        }
+    }
 }
