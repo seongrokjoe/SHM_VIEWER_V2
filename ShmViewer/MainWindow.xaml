@@ -188,9 +188,26 @@
                                            Foreground="{Binding IsStatusError, Converter={x:Static local:BoolToErrorColorConverter.Instance}}"/>
                                 <TextBlock Text="  |  마지막 갱신: " Foreground="#666" FontSize="11" Margin="10,0,0,0"/>
                                 <TextBlock Text="{Binding LastRefreshTime}" Foreground="#666" FontSize="11"/>
-                                <Button Content="Unload" Style="{StaticResource DangerBtn}" Margin="20,0,6,0"
-                                        Command="{Binding UnloadCommand}"
-                                        Visibility="{Binding IsLoaded, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+                                <Button Content="Run" Margin="20,0,6,0"
+                                        Command="{Binding RunCommand}">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource DarkBtn}">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding IsTreeBuilt}" Value="True"/>
+                                                        <Condition Binding="{Binding IsRunning}" Value="False"/>
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
+                                <Button Content="Stop" Style="{StaticResource DangerBtn}" Margin="20,0,6,0"
+                                        Command="{Binding StopCommand}"
+                                        Visibility="{Binding IsRunning, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
                                 <Button Content="Refresh" Style="{StaticResource DarkBtn}"
                                         Command="{Binding ManualRefreshCommand}"
                                         Visibility="{Binding IsManualMode, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
@@ -208,17 +225,15 @@
                             <Border Grid.Row="0" Background="#2D2D2D" Padding="22,4,4,4">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="260"/>
                                         <ColumnDefinition Width="160"/>
-                                        <ColumnDefinition Width="70"/>
-                                        <ColumnDefinition Width="70"/>
+                                        <ColumnDefinition Width="260"/>
+                                        <ColumnDefinition Width="110"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="NAME" Foreground="#9CDCFE" FontWeight="Bold"/>
-                                    <TextBlock Grid.Column="1" Text="TYPE" Foreground="#9CDCFE" FontWeight="Bold"/>
-                                    <TextBlock Grid.Column="2" Text="OFFSET" Foreground="#9CDCFE" FontWeight="Bold"/>
-                                    <TextBlock Grid.Column="3" Text="SIZE" Foreground="#9CDCFE" FontWeight="Bold"/>
-                                    <TextBlock Grid.Column="4" Text="VALUE" Foreground="#9CDCFE" FontWeight="Bold"/>
+                                    <TextBlock Grid.Column="0" Text="TYPE" Foreground="#9CDCFE" FontWeight="Bold"/>
+                                    <TextBlock Grid.Column="1" Text="NAME" Foreground="#9CDCFE" FontWeight="Bold"/>
+                                    <TextBlock Grid.Column="2" Text="SIZE (+offset)" Foreground="#9CDCFE" FontWeight="Bold"/>
+                                    <TextBlock Grid.Column="3" Text="VALUE" Foreground="#9CDCFE" FontWeight="Bold"/>
                                 </Grid>
                             </Border>
 
@@ -245,19 +260,29 @@
                                                               ItemsSource="{Binding Children}">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="260"/>
                                                 <ColumnDefinition Width="160"/>
-                                                <ColumnDefinition Width="70"/>
-                                                <ColumnDefinition Width="70"/>
+                                                <ColumnDefinition Width="260"/>
+                                                <ColumnDefinition Width="110"/>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding Name}"
-                                                       Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
-                                            <TextBlock Grid.Column="1" Text="{Binding TypeName}" Foreground="#4EC9B0"/>
-                                            <TextBlock Grid.Column="2" Text="{Binding OffsetDisplay}" Foreground="#B5CEA8"/>
-                                            <TextBlock Grid.Column="3" Text="{Binding Size}" Foreground="#B5CEA8"/>
-                                            <TextBlock Grid.Column="4" Text="{Binding Value}"
-                                                       Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
+                                            <!-- 수정 2: TYPE 먼저, 수정 6: TextBox로 드래그 복사 가능 -->
+                                            <TextBox Grid.Column="0" Text="{Binding TypeName}" IsReadOnly="True"
+                                                     Background="Transparent" BorderThickness="0" IsTabStop="False"
+                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
+                                                     Foreground="#4EC9B0"/>
+                                            <TextBox Grid.Column="1" Text="{Binding Name}" IsReadOnly="True"
+                                                     Background="Transparent" BorderThickness="0" IsTabStop="False"
+                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
+                                                     Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
+                                            <!-- 수정 2: SIZE(+offset) 통합 -->
+                                            <TextBox Grid.Column="2" Text="{Binding SizeDisplay}" IsReadOnly="True"
+                                                     Background="Transparent" BorderThickness="0" IsTabStop="False"
+                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
+                                                     Foreground="#B5CEA8"/>
+                                            <TextBox Grid.Column="3" Text="{Binding Value}" IsReadOnly="True"
+                                                     Background="Transparent" BorderThickness="0" IsTabStop="False"
+                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
+                                                     Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
                                         </Grid>
                                     </HierarchicalDataTemplate>
                                 </TreeView.ItemTemplate>

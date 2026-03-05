@@ -19,5 +19,7 @@ public partial class TreeNodeViewModel : ObservableObject
     public ObservableCollection<TreeNodeViewModel> Children { get; } = new();
 
     public string OffsetDisplay => $"+{Offset}";
+    // 수정 2: SIZE 컬럼에 offset 통합 표시
+    public string SizeDisplay => $"{Size} (+{Offset})";
     public bool HasChildren => Children.Count > 0;
 }

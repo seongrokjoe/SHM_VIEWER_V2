@@ -10,6 +10,13 @@ public class DataMapper
 
     public DataMapper(TypeDatabase db) => _db = db;
 
+    // 수정 1: SHM 연결 없이 빈 구조 트리 생성 (모든 값 "-")
+    public TreeNodeViewModel MapEmpty(TypeInfo rootType)
+    {
+        var data = new byte[rootType.TotalSize];
+        return Map(data, rootType);
+    }
+
     public TreeNodeViewModel Map(byte[] data, TypeInfo rootType)
     {
         var root = new TreeNodeViewModel
@@ -44,7 +51,13 @@ public class DataMapper
 
     private TreeNodeViewModel BuildArrayNode(byte[] data, MemberInfo member, int baseOffset)
     {
-        var elemSize = member.Size / member.ArrayCount;
+        // 수정 3: elemSize 계산 개선 — ResolvedType.TotalSize 우선
+        var elemSize = member.ResolvedType != null
+            ? member.ResolvedType.TotalSize
+            : (member.ArrayCount > 0 && member.Size > 0
+                ? member.Size / member.ArrayCount
+                : 0);
+
         var node = new TreeNodeViewModel
         {
             Name = member.Name,
@@ -99,9 +112,16 @@ public class DataMapper
 
         if (member.ResolvedType != null && !member.IsPointer)
         {
-            // Struct/Union → expand children
+            // 수정 3: Size 보완
+            if (node.Size == 0)
+                node.Size = member.ResolvedType.TotalSize * member.ArrayCount;
             node.Value = string.Empty;
             BuildChildren(node, data, member.ResolvedType, absOffset);
+        }
+        else if (member.Primitive == PrimitiveKind.None && member.ResolvedType == null)
+        {
+            // 수정 4: 미발견 타입 — hex dump 대신 경고 표시
+            node.Value = $"(미발견: {member.TypeName})";
         }
         else
         {
@@ -121,7 +141,8 @@ public class DataMapper
 
     public string ReadValue(byte[] data, MemberInfo member, int absOffset)
     {
-        if (absOffset < 0 || absOffset >= data.Length) return "???";
+        // 수정 5: 빈 데이터 또는 범위 초과 → "-"
+        if (data.Length == 0 || absOffset < 0 || absOffset >= data.Length) return "-";
 
         if (member.IsPointer)
             return ReadPointer(data, absOffset);
@@ -139,27 +160,29 @@ public class DataMapper
         return member.Primitive switch
         {
             PrimitiveKind.Char => ReadChar(data, absOffset),
-            PrimitiveKind.UChar => SafeRead(data, absOffset, 1) is { } b ? b[0].ToString() : "???",
-            PrimitiveKind.Short => SafeRead(data, absOffset, 2) is { } s ? BitConverter.ToInt16(s).ToString() : "???",
-            PrimitiveKind.UShort => SafeRead(data, absOffset, 2) is { } us ? BitConverter.ToUInt16(us).ToString() : "???",
-            PrimitiveKind.Int => SafeRead(data, absOffset, 4) is { } i ? BitConverter.ToInt32(i).ToString() : "???",
-            PrimitiveKind.UInt => SafeRead(data, absOffset, 4) is { } ui ? BitConverter.ToUInt32(ui).ToString() : "???",
-            PrimitiveKind.Long => SafeRead(data, absOffset, 4) is { } l ? BitConverter.ToInt32(l).ToString() : "???",
-            PrimitiveKind.ULong => SafeRead(data, absOffset, 4) is { } ul ? BitConverter.ToUInt32(ul).ToString() : "???",
-            PrimitiveKind.LongLong => SafeRead(data, absOffset, 8) is { } ll ? BitConverter.ToInt64(ll).ToString() : "???",
-            PrimitiveKind.ULongLong => SafeRead(data, absOffset, 8) is { } ull ? BitConverter.ToUInt64(ull).ToString() : "???",
-            PrimitiveKind.Float => SafeRead(data, absOffset, 4) is { } f ? BitConverter.ToSingle(f).ToString("G6") : "???",
-            PrimitiveKind.Double => SafeRead(data, absOffset, 8) is { } d ? BitConverter.ToDouble(d).ToString("G10") : "???",
-            PrimitiveKind.Bool => SafeRead(data, absOffset, 1) is { } bl ? (bl[0] != 0 ? "true" : "false") : "???",
+            PrimitiveKind.UChar => SafeRead(data, absOffset, 1) is { } b ? b[0].ToString() : "-",
+            PrimitiveKind.Short => SafeRead(data, absOffset, 2) is { } s ? BitConverter.ToInt16(s).ToString() : "-",
+            PrimitiveKind.UShort => SafeRead(data, absOffset, 2) is { } us ? BitConverter.ToUInt16(us).ToString() : "-",
+            PrimitiveKind.Int => SafeRead(data, absOffset, 4) is { } i ? BitConverter.ToInt32(i).ToString() : "-",
+            PrimitiveKind.UInt => SafeRead(data, absOffset, 4) is { } ui ? BitConverter.ToUInt32(ui).ToString() : "-",
+            PrimitiveKind.Long => SafeRead(data, absOffset, 4) is { } l ? BitConverter.ToInt32(l).ToString() : "-",
+            PrimitiveKind.ULong => SafeRead(data, absOffset, 4) is { } ul ? BitConverter.ToUInt32(ul).ToString() : "-",
+            PrimitiveKind.LongLong => SafeRead(data, absOffset, 8) is { } ll ? BitConverter.ToInt64(ll).ToString() : "-",
+            PrimitiveKind.ULongLong => SafeRead(data, absOffset, 8) is { } ull ? BitConverter.ToUInt64(ull).ToString() : "-",
+            PrimitiveKind.Float => SafeRead(data, absOffset, 4) is { } f ? BitConverter.ToSingle(f).ToString("G6") : "-",
+            PrimitiveKind.Double => SafeRead(data, absOffset, 8) is { } d ? BitConverter.ToDouble(d).ToString("G10") : "-",
+            PrimitiveKind.Bool => SafeRead(data, absOffset, 1) is { } bl ? (bl[0] != 0 ? "true" : "false") : "-",
             PrimitiveKind.WChar => ReadWChar(data, absOffset),
             PrimitiveKind.Pointer => ReadPointer(data, absOffset),
+            // 수정 4: PrimitiveKind.None → 미발견 타입 표시
+            PrimitiveKind.None => $"(미발견: {member.TypeName})",
             _ => ReadHexDump(data, absOffset, Math.Min(member.Size, 16))
         };
     }
 
     private string ReadChar(byte[] data, int offset)
     {
-        if (offset >= data.Length) return "???";
+        if (offset >= data.Length) return "-";
         var b = data[offset];
         return b is >= 32 and < 127 ? $"'{(char)b}' ({b})" : b.ToString();
     }
@@ -167,7 +190,7 @@ public class DataMapper
     private string ReadWChar(byte[] data, int offset)
     {
         var bytes = SafeRead(data, offset, 2);
-        if (bytes == null) return "???";
+        if (bytes == null) return "-";
         var c = BitConverter.ToChar(bytes);
         return c is >= ' ' and < (char)127 ? $"'{c}' ({(int)c})" : ((int)c).ToString();
     }
@@ -175,7 +198,7 @@ public class DataMapper
     private string ReadPointer(byte[] data, int offset)
     {
         var bytes = SafeRead(data, offset, 8);
-        if (bytes == null) return "???";
+        if (bytes == null) return "-";
         var addr = BitConverter.ToInt64(bytes);
         return $"0x{addr:X16}";
     }
@@ -183,7 +206,7 @@ public class DataMapper
     private string ReadEnum(byte[] data, MemberInfo member, int offset)
     {
         var bytes = SafeRead(data, offset, Math.Min(member.Size, 8));
-        if (bytes == null) return "???";
+        if (bytes == null) return "-";
         long value = member.Size switch
         {
             1 => bytes[0],
@@ -215,7 +238,7 @@ public class DataMapper
 
     private string ReadCharArray(byte[] data, int offset, int size, bool isSpare)
     {
-        if (offset < 0 || offset >= data.Length) return "???";
+        if (offset < 0 || offset >= data.Length) return "-";
         var available = Math.Min(size, data.Length - offset);
         var slice = data.AsSpan(offset, available);
 
@@ -243,7 +266,7 @@ public class DataMapper
 
     public static string ReadHexDump(byte[] data, int offset, int count)
     {
-        if (offset < 0 || offset >= data.Length) return "???";
+        if (offset < 0 || offset >= data.Length) return "-";
         var available = Math.Min(count, data.Length - offset);
         var sb = new StringBuilder();
         for (int i = 0; i < available; i++)

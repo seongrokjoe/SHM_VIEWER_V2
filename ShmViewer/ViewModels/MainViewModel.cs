@@ -7,6 +7,7 @@ using ShmViewer.Core.Parser;
 using ShmViewer.Views.Dialogs;
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Threading;
 
 namespace ShmViewer.ViewModels;
 
@@ -133,6 +134,9 @@ public partial class MainViewModel : ObservableObject
                         _lastUnresolvedTypes = new();
                         HasLastUnresolved = false;
                     }
+
+                    // 수정 7: 파싱 완료 후 저장된 탭 자동 복원
+                    RestoreSavedTabs();
                 });
             }
             catch (Exception ex)
@@ -177,7 +181,11 @@ public partial class MainViewModel : ObservableObject
         Tabs.Add(tab);
         SelectedTab = tab;
 
-        tab.Load();
+        // 수정 1: SHM 연결 없이 빈 트리 생성
+        tab.BuildTree();
+
+        // 수정 7: 탭 목록 저장
+        SaveTabs();
     }
 
     [RelayCommand]
@@ -187,6 +195,62 @@ public partial class MainViewModel : ObservableObject
         tab.Dispose();
         Tabs.Remove(tab);
         SelectedTab = Tabs.LastOrDefault();
+
+        // 수정 7: 탭 목록 저장
+        SaveTabs();
+    }
+
+    // 수정 7: 탭 목록 저장 헬퍼
+    private void SaveTabs()
+    {
+        var entries = Tabs.Select(t => new ShmTabEntry(t.ShmName, t.StructName, t.RefreshMode.ToString()));
+        ShmTabsStorage.Save(entries);
+    }
+
+    // 수정 7: 저장된 탭 복원
+    private void RestoreSavedTabs()
+    {
+        if (_currentDb == null) return;
+
+        var entries = ShmTabsStorage.Load();
+        if (entries.Count == 0) return;
+
+        var validEntries = new List<ShmTabEntry>();
+        foreach (var entry in entries)
+        {
+            var resolvedTypeName = _currentDb.ResolveTypeAlias(entry.StructName);
+            if (!_currentDb.Structs.TryGetValue(resolvedTypeName, out var rootType))
+                continue; // 매칭 실패 — 무시
+
+            // 이미 같은 탭이 열려 있으면 복원 건너뜀
+            if (Tabs.Any(t => t.ShmName == entry.ShmName && t.StructName == entry.StructName))
+            {
+                validEntries.Add(entry);
+                continue;
+            }
+
+            if (!Enum.TryParse<RefreshMode>(entry.RefreshMode, out var mode))
+                mode = RefreshMode.Ms500;
+
+            var tab = new ShmTabViewModel
+            {
+                ShmName = entry.ShmName,
+                StructName = entry.StructName,
+                RefreshMode = mode
+            };
+            tab.Initialize(_currentDb, rootType);
+            tab.BuildTree();
+
+            Tabs.Add(tab);
+            validEntries.Add(entry);
+        }
+
+        if (Tabs.Count > 0)
+            SelectedTab = Tabs.Last();
+
+        // 유효하지 않은 항목 제거 후 재저장
+        if (validEntries.Count != entries.Count)
+            ShmTabsStorage.Save(validEntries);
     }
 
     // ─── 검색 ───

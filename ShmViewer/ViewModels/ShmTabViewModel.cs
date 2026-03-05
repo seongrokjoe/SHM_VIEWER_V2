@@ -23,6 +23,8 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _shmName = string.Empty;
     [ObservableProperty] private string _structName = string.Empty;
     [ObservableProperty] private bool _isLoaded;
+    [ObservableProperty] private bool _isTreeBuilt;
+    [ObservableProperty] private bool _isRunning;
     [ObservableProperty] private string _statusText = "준비";
     [ObservableProperty] private bool _isStatusError;
     [ObservableProperty] private string _lastRefreshTime = "-";
@@ -34,7 +36,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     partial void OnRefreshModeChanged(RefreshMode value)
     {
         IsManualMode = value == RefreshMode.Manual;
-        if (IsLoaded) StartTimer();
+        if (IsRunning) StartTimer();
     }
 
     public void Initialize(TypeDatabase db, TypeInfo rootType)
@@ -45,8 +47,35 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         TabTitle = string.IsNullOrEmpty(ShmName) ? StructName : ShmName;
     }
 
+    // 수정 1: SHM 연결 없이 빈 구조 트리만 생성
     [RelayCommand]
-    public void Load()
+    public void BuildTree()
+    {
+        if (_rootType == null || _db == null) return;
+
+        try
+        {
+            _mapper = new DataMapper(_db);
+            var root = _mapper.MapEmpty(_rootType);
+
+            RootNodes.Clear();
+            RootNodes.Add(root);
+
+            IsTreeBuilt = true;
+            IsStatusError = false;
+            StatusText = $"구조체 트리 생성됨 | Total Size: {_rootType.TotalSize} bytes";
+            TabTitle = string.IsNullOrEmpty(ShmName) ? StructName : ShmName;
+        }
+        catch (Exception ex)
+        {
+            IsStatusError = true;
+            StatusText = $"❌ 트리 생성 오류: {ex.Message}";
+        }
+    }
+
+    // 수정 1: SHM 연결 + 타이머 시작
+    [RelayCommand]
+    public void Run()
     {
         if (_rootType == null || _db == null) return;
 
@@ -59,9 +88,11 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
             RootNodes.Clear();
             RootNodes.Add(root);
 
+            IsTreeBuilt = true;
+            IsRunning = true;
             IsLoaded = true;
             IsStatusError = false;
-            StatusText = $"✅ Loaded | Total Size: {_rootType.TotalSize} bytes";
+            StatusText = $"✅ Running | Total Size: {_rootType.TotalSize} bytes";
             TabTitle = ShmName;
             LastRefreshTime = DateTime.Now.ToString("HH:mm:ss.fff");
             StartTimer();
@@ -70,6 +101,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         {
             IsStatusError = true;
             StatusText = $"❌ {ex.Message}";
+            // 트리는 유지 (IsTreeBuilt 변경 없음)
         }
         catch (Exception ex)
         {
@@ -78,11 +110,25 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         }
     }
 
+    // 수정 1: 갱신 중지, 트리 유지
+    [RelayCommand]
+    public void Stop()
+    {
+        StopTimer();
+        IsRunning = false;
+        IsLoaded = false;
+        IsStatusError = false;
+        StatusText = "중지됨 (트리 유지)";
+    }
+
+    // 탭 닫기 시에만 사용
     [RelayCommand]
     public void Unload()
     {
         StopTimer();
+        IsRunning = false;
         IsLoaded = false;
+        IsTreeBuilt = false;
         RootNodes.Clear();
         StatusText = "Unloaded";
     }
@@ -92,7 +138,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
     private void Refresh()
     {
-        if (!IsLoaded || _rootType == null || _mapper == null) return;
+        if (!IsRunning || _rootType == null || _mapper == null) return;
 
         try
         {

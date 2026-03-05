@@ -321,6 +321,8 @@ public class HeaderParserService
         {
             member.TypeName = spelling;
             member.ResolvedType = typeInfo;
+            // 수정 3: member.Size가 0이면 typeInfo.TotalSize로 보완
+            if (member.Size == 0) member.Size = typeInfo.TotalSize * member.ArrayCount;
             return;
         }
 
