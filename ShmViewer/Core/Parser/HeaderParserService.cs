@@ -458,7 +458,7 @@ public class HeaderParserService
             {
                 RecomputeTypeSize(member.ResolvedType.Name, db, processed);
                 var expected = member.ResolvedType.TotalSize * member.ArrayCount;
-                if (expected > 0)
+                if (expected > member.Size)
                     member.Size = expected;
             }
         }
@@ -469,7 +469,7 @@ public class HeaderParserService
             ? typeInfo.Members.Max(m => m.Size)
             : typeInfo.Members.Max(m => m.Offset + m.Size);
 
-        if (computed > 0)
+        if (computed > typeInfo.TotalSize)
             typeInfo.TotalSize = computed;
     }
 }
