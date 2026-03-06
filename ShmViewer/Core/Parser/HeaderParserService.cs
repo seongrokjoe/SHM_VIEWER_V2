@@ -451,6 +451,18 @@ public class HeaderParserService
         var processed = new HashSet<string>();
         foreach (var name in db.Structs.Keys.ToList())
             RecomputeTypeSize(name, db, processed);
+
+        // Step 3: Clang이 field offset 계산 실패한 struct 감지 후 재계산
+        // 비-union, 멤버 2개 이상, 첫 번째 이후 멤버들이 모두 Offset=0 & non-bitfield인 경우
+        foreach (var typeInfo in db.Structs.Values)
+        {
+            if (!typeInfo.IsUnion
+                && typeInfo.Members.Count > 1
+                && typeInfo.Members.Skip(1).All(m => m.Offset == 0 && m.BitFieldWidth == 0))
+            {
+                RecalcMemberOffsets(typeInfo);
+            }
+        }
     }
 
     private static void RecomputeTypeSize(string name, TypeDatabase db, HashSet<string> processed)
@@ -478,5 +490,40 @@ public class HeaderParserService
 
         if (computed > typeInfo.TotalSize)
             typeInfo.TotalSize = computed;
+    }
+
+    // Clang field offset 실패 시 자연 정렬 기반 offset 재계산
+    private static void RecalcMemberOffsets(TypeInfo typeInfo)
+    {
+        int pos = 0;
+        int maxAlign = 1;
+        foreach (var m in typeInfo.Members)
+        {
+            int align = GetMemberAlignment(m);
+            maxAlign = Math.Max(maxAlign, align);
+            pos = ((pos + align - 1) / align) * align; // align up
+            m.Offset = pos;
+            pos += m.Size;
+        }
+        // trailing padding
+        int structSize = ((pos + maxAlign - 1) / maxAlign) * maxAlign;
+        if (structSize > typeInfo.TotalSize)
+            typeInfo.TotalSize = structSize;
+    }
+
+    private static int GetMemberAlignment(MemberInfo m)
+    {
+        if (m.IsPointer) return 8;
+        if (m.Primitive != PrimitiveKind.None)
+            return Math.Min(8, TypeDatabase.GetPrimitiveSize(m.Primitive));
+        if (m.ResolvedType != null)
+            return GetStructNaturalAlignment(m.ResolvedType);
+        return 1;
+    }
+
+    private static int GetStructNaturalAlignment(TypeInfo ti)
+    {
+        if (ti.Members.Count == 0) return 1;
+        return ti.Members.Max(m => GetMemberAlignment(m));
     }
 }
