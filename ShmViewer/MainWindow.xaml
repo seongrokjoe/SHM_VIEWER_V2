@@ -220,21 +220,21 @@
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="{Binding Col0Width}"/>
-                                        <ColumnDefinition Width="4" x:Name="Splitter0"/>
+                                        <ColumnDefinition Width="4"/>
                                         <ColumnDefinition Width="{Binding Col1Width}"/>
-                                        <ColumnDefinition Width="4" x:Name="Splitter1"/>
+                                        <ColumnDefinition Width="4"/>
                                         <ColumnDefinition Width="{Binding Col2Width}"/>
-                                        <ColumnDefinition Width="4" x:Name="Splitter2"/>
+                                        <ColumnDefinition Width="4"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="SIZE (+offset)" Foreground="#9CDCFE" FontWeight="Bold"/>
-                                    <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="#444" Cursor="SizeWE"
+                                    <GridSplitter x:Name="Splitter0" Grid.Column="1" HorizontalAlignment="Stretch" Background="#444" Cursor="SizeWE"
                                                   PreviewMouseLeftButtonDown="GridSplitter_PreviewMouseDown" PreviewMouseMove="GridSplitter_PreviewMouseMove"/>
                                     <TextBlock Grid.Column="2" Text="TYPE" Foreground="#9CDCFE" FontWeight="Bold" Margin="4,0,0,0"/>
-                                    <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch" Background="#444" Cursor="SizeWE"
+                                    <GridSplitter x:Name="Splitter1" Grid.Column="3" HorizontalAlignment="Stretch" Background="#444" Cursor="SizeWE"
                                                   PreviewMouseLeftButtonDown="GridSplitter_PreviewMouseDown" PreviewMouseMove="GridSplitter_PreviewMouseMove"/>
                                     <TextBlock Grid.Column="4" Text="NAME" Foreground="#9CDCFE" FontWeight="Bold" Margin="4,0,0,0"/>
-                                    <GridSplitter Grid.Column="5" HorizontalAlignment="Stretch" Background="#444" Cursor="SizeWE"
+                                    <GridSplitter x:Name="Splitter2" Grid.Column="5" HorizontalAlignment="Stretch" Background="#444" Cursor="SizeWE"
                                                   PreviewMouseLeftButtonDown="GridSplitter_PreviewMouseDown" PreviewMouseMove="GridSplitter_PreviewMouseMove"/>
                                     <TextBlock Grid.Column="6" Text="VALUE" Foreground="#9CDCFE" FontWeight="Bold" Margin="4,0,0,0"/>
                                 </Grid>
@@ -308,15 +308,8 @@
         <Expander Grid.Row="4" Header="검색 결과" IsExpanded="{Binding IsSearchExpanded}"
                   Background="#1E1E1E" BorderBrush="#444" BorderThickness="0,1,0,0">
             <Grid Background="#1E1E1E">
-                <Grid.Resources>
-                    <CollectionViewSource x:Key="SearchResultsView" Source="{Binding SearchResults}">
-                        <CollectionViewSource.GroupDescriptions>
-                            <PropertyGroupDescription PropertyName="TabName"/>
-                        </CollectionViewSource.GroupDescriptions>
-                    </CollectionViewSource>
-                </Grid.Resources>
                 <DataGrid x:Name="SearchResultGrid"
-                          ItemsSource="{Binding Source={StaticResource SearchResultsView}}"
+                          ItemsSource="{Binding SearchResults}"
                           AutoGenerateColumns="False"
                           IsReadOnly="True"
                           SelectionMode="Single"

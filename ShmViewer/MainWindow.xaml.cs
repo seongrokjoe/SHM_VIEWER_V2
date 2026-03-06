@@ -1,7 +1,9 @@
 using ShmViewer.ViewModels;
 using ShmViewer.Views.Dialogs;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -27,6 +29,9 @@ public partial class MainWindow : Window
                 treeView.AddHandler(TreeViewItem.ExpandedEvent,
                     new RoutedEventHandler(TreeViewItem_Expanded));
             }
+
+            // Setup search results grouping
+            SetupSearchResultsGrouping();
         };
 
         this.PreviewMouseUp += (s, e) =>
@@ -35,6 +40,22 @@ public partial class MainWindow : Window
             {
                 _currentSplitter.ReleaseMouseCapture();
                 _currentSplitter = null;
+            }
+        };
+    }
+
+    private void SetupSearchResultsGrouping()
+    {
+        var cvs = new CollectionViewSource { Source = _vm.SearchResults };
+        cvs.GroupDescriptions.Add(new PropertyGroupDescription("TabName"));
+        SearchResultGrid.ItemsSource = cvs.View;
+
+        // Update when search results change
+        _vm.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.SearchResults))
+            {
+                cvs.Source = _vm.SearchResults;
             }
         };
     }
