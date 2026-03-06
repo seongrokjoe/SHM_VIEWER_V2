@@ -17,6 +17,26 @@ public partial class MainWindow : Window
         InitializeComponent();
         _vm = new MainViewModel();
         DataContext = _vm;
+
+        // Add lazy loading event handler
+        this.Loaded += (s, e) =>
+        {
+            var treeView = FindVisualChild<TreeView>(this);
+            if (treeView != null)
+            {
+                treeView.AddHandler(TreeViewItem.ExpandedEvent,
+                    new RoutedEventHandler(TreeViewItem_Expanded));
+            }
+        };
+
+        this.PreviewMouseUp += (s, e) =>
+        {
+            if (_currentSplitter != null)
+            {
+                _currentSplitter.ReleaseMouseCapture();
+                _currentSplitter = null;
+            }
+        };
     }
 
     private void Window_DragOver(object sender, DragEventArgs e)
@@ -43,6 +63,22 @@ public partial class MainWindow : Window
         if (tree.SelectedItem is not TreeNodeViewModel node) return;
         if (node.MemberInfo == null || node.MemberInfo.ResolvedType != null) return;
 
+        // Show context menu
+        var contextMenu = new ContextMenu();
+        var menuItem = new MenuItem
+        {
+            Header = "바이너리 확인"
+        };
+        menuItem.Click += (s, args) => ShowDetailPopup(node);
+        contextMenu.Items.Add(menuItem);
+
+        contextMenu.PlacementTarget = tree;
+        contextMenu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void ShowDetailPopup(TreeNodeViewModel node)
+    {
         var selectedTab = _vm.SelectedTab;
         if (selectedTab == null) return;
 
@@ -97,11 +133,27 @@ public partial class MainWindow : Window
 
     private void BringNodeIntoView(TreeNodeViewModel node)
     {
-        var treeView = FindVisualChild<TreeView>(this);
+        // Find the active tab's TreeView by navigating through TabControl
+        var tabControl = FindVisualChild<TabControl>(this);
+        if (tabControl?.SelectedItem is not ShmTabViewModel selectedTab) return;
+
+        // Find the TabItem containing the selected tab
+        var tabItem = tabControl.ItemContainerGenerator.ContainerFromItem(selectedTab) as TabItem;
+        if (tabItem == null) return;
+
+        // Find TreeView within the selected tab's content
+        var treeView = FindVisualChild<TreeView>(tabItem);
         if (treeView == null) return;
 
         var item = FindTreeViewItem(treeView, node);
-        item?.BringIntoView();
+        if (item != null)
+        {
+            // Use Background priority to wait for expand animation to complete
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+            {
+                item.BringIntoView();
+            });
+        }
     }
 
     private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
@@ -129,5 +181,62 @@ public partial class MainWindow : Window
             if (result != null) return result;
         }
         return null;
+    }
+
+    private void TreeViewItem_Expanded(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not TreeViewItem item) return;
+        if (item.DataContext is not TreeNodeViewModel node) return;
+
+        // Trigger lazy loading if this node is lazy
+        if (node.IsLazy)
+        {
+            node.ExpandLoad();
+        }
+    }
+
+    private Point _gridSplitterStart;
+    private double _col0WidthStart;
+    private double _col1WidthStart;
+    private double _col2WidthStart;
+    private GridSplitter? _currentSplitter;
+
+    private void GridSplitter_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not GridSplitter splitter) return;
+        _gridSplitterStart = e.GetPosition(this);
+        _col0WidthStart = _vm.Col0Width;
+        _col1WidthStart = _vm.Col1Width;
+        _col2WidthStart = _vm.Col2Width;
+        _currentSplitter = splitter;
+        splitter.CaptureMouse();
+    }
+
+    private void GridSplitter_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_currentSplitter == null || e.LeftButton != MouseButtonState.Pressed) return;
+
+        var currentPos = e.GetPosition(this);
+        var delta = currentPos.X - _gridSplitterStart.X;
+
+        if (_currentSplitter.Name == "Splitter0")
+        {
+            // Resize Col0 (SIZE +offset) and Col1 (TYPE)
+            var newCol0 = Math.Max(30, _col0WidthStart + delta);
+            _vm.Col0Width = newCol0;
+            _vm.Col1Width = Math.Max(100, _col1WidthStart - delta);
+        }
+        else if (_currentSplitter.Name == "Splitter1")
+        {
+            // Resize Col1 (TYPE) and Col2 (NAME)
+            var newCol1 = Math.Max(100, _col1WidthStart + delta);
+            _vm.Col1Width = newCol1;
+            _vm.Col2Width = Math.Max(100, _col2WidthStart - delta);
+        }
+        else if (_currentSplitter.Name == "Splitter2")
+        {
+            // Resize Col2 (NAME) - Col3 (VALUE) is * so it auto-adjusts
+            _vm.Col2Width = Math.Max(100, _col2WidthStart + delta);
+        }
     }
 }

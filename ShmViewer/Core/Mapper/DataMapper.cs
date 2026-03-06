@@ -38,7 +38,6 @@ public class DataMapper
         {
             if (member.ArrayDims.Length > 1)
             {
-                // 다차원 배열 → 계층 트리
                 parent.Children.Add(BuildMultiDimArrayNode(data, member, baseOffset, 0, 0));
             }
             else if (member.ArrayCount > 1)
@@ -53,7 +52,7 @@ public class DataMapper
     }
 
     // 다차원 배열을 계층적 트리 노드로 구성 (e.g. [2][3] → [0]→{[0],[1],[2]}, [1]→{[0],[1],[2]})
-    private TreeNodeViewModel BuildMultiDimArrayNode(
+    public TreeNodeViewModel BuildMultiDimArrayNode(
         byte[] data, MemberInfo member, int baseOffset, int dimIdx, int flatBase)
     {
         var elemSize = member.ResolvedType?.TotalSize
@@ -113,7 +112,7 @@ public class DataMapper
         return node;
     }
 
-    private TreeNodeViewModel BuildArrayNode(byte[] data, MemberInfo member, int baseOffset)
+    public TreeNodeViewModel BuildArrayNode(byte[] data, MemberInfo member, int baseOffset)
     {
         // 수정 3: elemSize 계산 개선 — ResolvedType.TotalSize 우선
         var elemSize = member.ResolvedType != null
@@ -162,7 +161,7 @@ public class DataMapper
         return node;
     }
 
-    private TreeNodeViewModel BuildNode(byte[] data, MemberInfo member, int baseOffset)
+    public TreeNodeViewModel BuildNode(byte[] data, MemberInfo member, int baseOffset)
     {
         var absOffset = baseOffset + member.Offset;
         var node = new TreeNodeViewModel
@@ -181,7 +180,12 @@ public class DataMapper
             if (node.Size == 0)
                 node.Size = member.ResolvedType.TotalSize * member.ArrayCount;
             node.Value = string.Empty;
-            BuildChildren(node, data, member.ResolvedType, absOffset);
+
+            // Use lazy loading for nested struct/union nodes
+            var nestedMembers = member.ResolvedType.Members
+                .Select(m => (m, absOffset))
+                .ToList();
+            node.SetLazy(nestedMembers, data, this);
         }
         else if (member.Primitive == PrimitiveKind.None && member.ResolvedType == null)
         {
@@ -348,5 +352,37 @@ public class DataMapper
         var buf = new byte[count];
         Array.Copy(data, offset, buf, 0, count);
         return buf;
+    }
+
+    /// <summary>
+    /// Collect all unresolved types in the structure tree without building TreeNodeViewModel.
+    /// Returns list of unresolved type references like "ParentType.MemberName → TypeName 미발견"
+    /// </summary>
+    public List<string> CollectUnresolved(TypeInfo rootType, string parentName = "")
+    {
+        var unresolved = new List<string>();
+        CollectUnresolvedRecursive(rootType, parentName, unresolved);
+        return unresolved;
+    }
+
+    private void CollectUnresolvedRecursive(TypeInfo typeInfo, string parentName, List<string> unresolved)
+    {
+        foreach (var member in typeInfo.Members)
+        {
+            string path = string.IsNullOrEmpty(parentName)
+                ? member.Name
+                : $"{parentName}.{member.Name}";
+
+            if (member.ResolvedType != null && !member.IsPointer)
+            {
+                // Recursively check nested struct members
+                CollectUnresolvedRecursive(member.ResolvedType, path, unresolved);
+            }
+            else if (member.Primitive == PrimitiveKind.None && member.ResolvedType == null)
+            {
+                // Unresolved type found
+                unresolved.Add($"{path} → {member.TypeName} 미발견");
+            }
+        }
     }
 }

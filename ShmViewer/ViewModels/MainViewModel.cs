@@ -16,9 +16,44 @@ public partial class MainViewModel : ObservableObject
     private TypeDatabase? _currentDb;
 
     [ObservableProperty] private ObservableCollection<string> _headerFiles = new();
+
+    // CanRefreshHeaders: true when no tab is running
+    public bool CanRefreshHeaders =>!Tabs.Any(t => t.IsRunning);
     [ObservableProperty] private ObservableCollection<ShmTabViewModel> _tabs = new();
     [ObservableProperty] private ShmTabViewModel? _selectedTab;
     [ObservableProperty] private string _parserStatus = "헤더 파일을 업로드하세요.";
+
+    partial void OnSelectedTabChanged(ShmTabViewModel? value)
+    {
+        // Update IsActiveTab for all tabs
+        foreach (var tab in Tabs)
+        {
+            tab.IsActiveTab = (tab == value);
+        }
+    }
+
+    partial void OnTabsChanged(ObservableCollection<ShmTabViewModel> value)
+    {
+        // Subscribe to property changes in tabs to update CanRefreshHeaders and SearchScopeItems
+        UpdateSearchScopeItems();
+        value.CollectionChanged += (s, e) =>
+        {
+            OnPropertyChanged(nameof(CanRefreshHeaders));
+            UpdateSearchScopeItems();
+
+            // Subscribe to IsRunning changes for new tabs
+            if (e.NewItems != null)
+            {
+                foreach (ShmTabViewModel newTab in e.NewItems)
+                {
+                    newTab.PropertyChanged += (_, _) =>
+                    {
+                        OnPropertyChanged(nameof(CanRefreshHeaders));
+                    };
+                }
+            }
+        };
+    }
 
     // ─── 미발견 타입 재확인 ───
     private List<string> _lastUnresolvedTypes = new();
@@ -29,10 +64,31 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _newStructName = string.Empty;
     [ObservableProperty] private RefreshMode _newRefreshMode = RefreshMode.Ms500;
 
+    // ─── 컬럼 너비 (그리드스플리터용) ───
+    [ObservableProperty] private double _col0Width = 90;   // SIZE +offset
+    [ObservableProperty] private double _col1Width = 160;  // TYPE
+    [ObservableProperty] private double _col2Width = 240;  // NAME
+    // Col3 (VALUE)는 * (나머지)
+
     // ─── 검색 ───
     [ObservableProperty] private string _searchText = string.Empty;
     [ObservableProperty] private ObservableCollection<SearchResultViewModel> _searchResults = new();
-    [ObservableProperty] private bool _isSearchPanelVisible;
+    [ObservableProperty] private bool _isSearchExpanded;
+    [ObservableProperty] private ObservableCollection<string> _searchScopeItems = new();
+    [ObservableProperty] private string _selectedSearchScope = "전체 탭";
+
+    private void UpdateSearchScopeItems()
+    {
+        SearchScopeItems.Clear();
+        SearchScopeItems.Add("전체 탭");
+        foreach (var tab in Tabs)
+        {
+            SearchScopeItems.Add(tab.TabTitle);
+        }
+        // Reset to "전체 탭" if current selection is invalid
+        if (!SearchScopeItems.Contains(SelectedSearchScope))
+            SelectedSearchScope = "전체 탭";
+    }
 
     public MainViewModel()
     {
@@ -97,6 +153,13 @@ public partial class MainViewModel : ObservableObject
         ParserStatus = "헤더 파일을 업로드하세요.";
     }
 
+    [RelayCommand(CanExecute = nameof(CanRefreshHeaders))]
+    private void RefreshHeaders()
+    {
+        if (HeaderFiles.Count > 0)
+            ParseHeaders();
+    }
+
     [RelayCommand]
     private void ShowLastFail()
     {
@@ -159,6 +222,16 @@ public partial class MainViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(NewShmName) || string.IsNullOrWhiteSpace(NewStructName))
         {
             MessageBox.Show("SHM Name과 Struct 이름을 입력하세요.", "알림", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // Check for duplicate SHM Name
+        if (Tabs.Any(t => t.ShmName == NewShmName))
+        {
+            var existingTab = Tabs.First(t => t.ShmName == NewShmName);
+            SelectedTab = existingTab;
+            MessageBox.Show($"'{NewShmName}' 탭이 이미 열려 있습니다.", "알림",
+                MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -264,48 +337,84 @@ public partial class MainViewModel : ObservableObject
 
         if (string.IsNullOrWhiteSpace(SearchText))
         {
-            IsSearchPanelVisible = false;
+            IsSearchExpanded = false;
             return;
         }
 
         var keyword = SearchText;
-        foreach (var tab in Tabs)
+
+        // Determine which tabs to search based on SelectedSearchScope
+        var tabsToSearch = SelectedSearchScope == "전체 탭"
+            ? Tabs.ToList()
+            : Tabs.Where(t => t.TabTitle == SelectedSearchScope).ToList();
+
+        foreach (var tab in tabsToSearch)
         {
-            foreach (var rootNode in tab.RootNodes)
-                SearchNode(rootNode, tab, keyword, new List<TreeNodeViewModel>());
+            // Use flat index for faster search on currently loaded nodes
+            foreach (var node in tab.FlatNodes)
+            {
+                bool match = node.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase)
+                          || node.TypeName.Contains(keyword, StringComparison.OrdinalIgnoreCase)
+                          || node.Value.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+
+                if (match)
+                {
+                    var ancestorPath = BuildAncestorPath(node, tab);
+                    var path = ancestorPath.Count > 0
+                        ? string.Join(" > ", ancestorPath.Select(a => a.Name)) + " > " + node.Name
+                        : node.Name;
+
+                    SearchResults.Add(new SearchResultViewModel
+                    {
+                        TabName = tab.TabTitle,
+                        NodePath = path,
+                        TypeName = node.TypeName,
+                        Value = node.Value,
+                        Tab = tab,
+                        Node = node,
+                        AncestorPath = ancestorPath
+                    });
+                }
+            }
         }
 
-        IsSearchPanelVisible = SearchResults.Count > 0;
+        IsSearchExpanded = SearchResults.Count > 0;
     }
 
-    private void SearchNode(TreeNodeViewModel node, ShmTabViewModel tab, string keyword,
-        List<TreeNodeViewModel> ancestors)
+    private List<TreeNodeViewModel> BuildAncestorPath(TreeNodeViewModel node, ShmTabViewModel tab)
     {
-        bool match = node.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase)
-                  || node.TypeName.Contains(keyword, StringComparison.OrdinalIgnoreCase)
-                  || node.Value.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+        var ancestors = new List<TreeNodeViewModel>();
 
-        if (match)
+        // Find ancestors by traversing the tree upward from root
+        foreach (var root in tab.RootNodes)
         {
-            var path = ancestors.Count > 0
-                ? string.Join(" > ", ancestors.Select(a => a.Name)) + " > " + node.Name
-                : node.Name;
-
-            SearchResults.Add(new SearchResultViewModel
-            {
-                TabName = tab.TabTitle,
-                NodePath = path,
-                TypeName = node.TypeName,
-                Value = node.Value,
-                Tab = tab,
-                Node = node,
-                AncestorPath = ancestors.ToList()
-            });
+            if (CollectAncestors(root, node, new List<TreeNodeViewModel>(), ancestors))
+                break;
         }
 
-        var newAncestors = ancestors.Append(node).ToList();
-        foreach (var child in node.Children)
-            SearchNode(child, tab, keyword, newAncestors);
+        return ancestors;
+    }
+
+    private bool CollectAncestors(TreeNodeViewModel current, TreeNodeViewModel target,
+        List<TreeNodeViewModel> path, List<TreeNodeViewModel> result)
+    {
+        // If we found the target, return true and set result
+        if (current == target)
+        {
+            result.AddRange(path);
+            return true;
+        }
+
+        // Search in children
+        foreach (var child in current.Children)
+        {
+            path.Add(current);
+            if (CollectAncestors(child, target, path, result))
+                return true;
+            path.RemoveAt(path.Count - 1);
+        }
+
+        return false;
     }
 
     [RelayCommand]
@@ -314,7 +423,7 @@ public partial class MainViewModel : ObservableObject
         foreach (var r in SearchResults)
             r.Node.IsHighlighted = false;
         SearchResults.Clear();
-        IsSearchPanelVisible = false;
+        IsSearchExpanded = false;
         SearchText = string.Empty;
     }
 }

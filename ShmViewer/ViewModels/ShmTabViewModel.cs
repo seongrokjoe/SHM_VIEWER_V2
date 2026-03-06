@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using ShmViewer.Core.Mapper;
 using ShmViewer.Core.Model;
 using ShmViewer.Core.Shm;
+using ShmViewer.Views.Dialogs;
 using System.Collections.ObjectModel;
 using System.Timers;
 using System.Windows;
@@ -31,6 +32,8 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     [NotifyPropertyChangedFor(nameof(CanRun))]
     private bool _isRunning;
 
+    [ObservableProperty] private bool _isActiveTab;
+
     public bool CanRun => IsTreeBuilt && !IsRunning;
     [ObservableProperty] private string _statusText = "준비";
     [ObservableProperty] private bool _isStatusError;
@@ -39,6 +42,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _isManualMode;
 
     public ObservableCollection<TreeNodeViewModel> RootNodes { get; } = new();
+    public List<TreeNodeViewModel> FlatNodes { get; private set; } = new();
 
     partial void OnRefreshModeChanged(RefreshMode value)
     {
@@ -63,10 +67,31 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         try
         {
             _mapper = new DataMapper(_db);
+
+            // Pre-check for unresolved types
+            var unresolvedTypes = _mapper.CollectUnresolved(_rootType);
+            if (unresolvedTypes.Count > 0)
+            {
+                IsStatusError = true;
+                StatusText = $"❌ 미발견 타입이 있습니다. 자세히 보기를 클릭하세요.";
+                IsTreeBuilt = false;
+
+                // Show dialog with unresolved types
+                Application.Current?.Dispatcher.Invoke(() =>
+                {
+                    var dialog = new LoadFailDialog(unresolvedTypes);
+                    dialog.ShowDialog();
+                });
+                return;
+            }
+
             var root = _mapper.MapEmpty(_rootType);
 
             RootNodes.Clear();
             RootNodes.Add(root);
+
+            // Rebuild flat index for search
+            RebuildFlatIndex();
 
             IsTreeBuilt = true;
             IsStatusError = false;
@@ -94,6 +119,9 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
             RootNodes.Clear();
             RootNodes.Add(root);
+
+            // Rebuild flat index for search
+            RebuildFlatIndex();
 
             IsTreeBuilt = true;
             IsRunning = true;
@@ -146,6 +174,9 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     private void Refresh()
     {
         if (!IsRunning || _rootType == null || _mapper == null) return;
+
+        // Only refresh if this is the active tab (or manual mode)
+        if (!IsActiveTab && !IsManualMode) return;
 
         try
         {
@@ -202,6 +233,37 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         _timer?.Stop();
         _timer?.Dispose();
         _timer = null;
+    }
+
+    /// <summary>
+    /// Rebuild flat index of all currently loaded nodes (including lazily loaded ones).
+    /// Used for search performance - enables searching loaded nodes without full tree traversal.
+    /// </summary>
+    private void RebuildFlatIndex()
+    {
+        FlatNodes.Clear();
+        foreach (var root in RootNodes)
+        {
+            FlattenNodes(root, FlatNodes);
+        }
+    }
+
+    private static void FlattenNodes(TreeNodeViewModel node, List<TreeNodeViewModel> flatList)
+    {
+        flatList.Add(node);
+        foreach (var child in node.Children)
+        {
+            FlattenNodes(child, flatList);
+        }
+    }
+
+    /// <summary>
+    /// Append newly loaded nodes from lazy expansion to flat index.
+    /// Called when a lazy node is expanded.
+    /// </summary>
+    public void AppendToFlatIndex(TreeNodeViewModel newlyExpandedNode)
+    {
+        FlattenNodes(newlyExpandedNode, FlatNodes);
     }
 
     public void Dispose() => StopTimer();

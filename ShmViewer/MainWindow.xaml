@@ -74,17 +74,25 @@
                         <TextBlock Text="헤더 파일" FontWeight="Bold" FontSize="13" Foreground="#9CDCFE" VerticalAlignment="Center"/>
                         <Button Content="+ 파일 추가" Style="{StaticResource DarkBtn}" Margin="10,0,4,0"
                                 Command="{Binding AddHeaderFilesCommand}"/>
-                        <Button Content="전체 삭제" Style="{StaticResource DangerBtn}"
+                        <Button Content="전체 삭제" Style="{StaticResource DangerBtn}" Margin="0,0,10,0"
                                 Command="{Binding ClearAllHeaderFilesCommand}"/>
+                        <Button Content="🔄 Refresh" Style="{StaticResource DarkBtn}" Margin="0,0,10,0"
+                                Command="{Binding RefreshHeadersCommand}"
+                                IsEnabled="{Binding CanRefreshHeaders}"
+                                ToolTip="Run 중인 SHM Tab이 있을 때는 Refresh할 수 없습니다."/>
                         <TextBlock Text="(헤더 파일을 창에 드래그&amp;드롭하거나 버튼으로 추가)"
-                                   Foreground="#666" Margin="10,0,0,0" FontSize="11"/>
+                                   Foreground="#666" Margin="0,0,0,0" FontSize="11"/>
                     </StackPanel>
 
                     <!-- 검색 UI -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <TextBox x:Name="SearchBox" Width="200" Margin="0,0,4,0"
+                        <TextBox x:Name="SearchBox" Width="150" Margin="0,0,4,0"
                                  Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
                                  KeyDown="SearchBox_KeyDown"/>
+                        <ComboBox Width="100" Margin="0,0,4,0" ItemsSource="{Binding SearchScopeItems}"
+                                  SelectedItem="{Binding SelectedSearchScope}"
+                                  Background="#3C3C3C" Foreground="#D4D4D4"
+                                  FontFamily="Consolas" FontSize="11"/>
                         <Button Content="검색" Style="{StaticResource DarkBtn}"
                                 Command="{Binding SearchCommand}"/>
                     </StackPanel>
@@ -207,19 +215,28 @@
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
 
-                            <!-- Column Header -->
+                            <!-- Column Header with GridSplitters -->
                             <Border Grid.Row="0" Background="#2D2D2D" Padding="22,4,4,4">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="160"/>
-                                        <ColumnDefinition Width="260"/>
-                                        <ColumnDefinition Width="110"/>
+                                        <ColumnDefinition Width="{Binding Col0Width}"/>
+                                        <ColumnDefinition Width="4" x:Name="Splitter0"/>
+                                        <ColumnDefinition Width="{Binding Col1Width}"/>
+                                        <ColumnDefinition Width="4" x:Name="Splitter1"/>
+                                        <ColumnDefinition Width="{Binding Col2Width}"/>
+                                        <ColumnDefinition Width="4" x:Name="Splitter2"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="TYPE" Foreground="#9CDCFE" FontWeight="Bold"/>
-                                    <TextBlock Grid.Column="1" Text="NAME" Foreground="#9CDCFE" FontWeight="Bold"/>
-                                    <TextBlock Grid.Column="2" Text="SIZE (+offset)" Foreground="#9CDCFE" FontWeight="Bold"/>
-                                    <TextBlock Grid.Column="3" Text="VALUE" Foreground="#9CDCFE" FontWeight="Bold"/>
+                                    <TextBlock Grid.Column="0" Text="SIZE (+offset)" Foreground="#9CDCFE" FontWeight="Bold"/>
+                                    <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="#444" Cursor="SizeWE"
+                                                  PreviewMouseLeftButtonDown="GridSplitter_PreviewMouseDown" PreviewMouseMove="GridSplitter_PreviewMouseMove"/>
+                                    <TextBlock Grid.Column="2" Text="TYPE" Foreground="#9CDCFE" FontWeight="Bold" Margin="4,0,0,0"/>
+                                    <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch" Background="#444" Cursor="SizeWE"
+                                                  PreviewMouseLeftButtonDown="GridSplitter_PreviewMouseDown" PreviewMouseMove="GridSplitter_PreviewMouseMove"/>
+                                    <TextBlock Grid.Column="4" Text="NAME" Foreground="#9CDCFE" FontWeight="Bold" Margin="4,0,0,0"/>
+                                    <GridSplitter Grid.Column="5" HorizontalAlignment="Stretch" Background="#444" Cursor="SizeWE"
+                                                  PreviewMouseLeftButtonDown="GridSplitter_PreviewMouseDown" PreviewMouseMove="GridSplitter_PreviewMouseMove"/>
+                                    <TextBlock Grid.Column="6" Text="VALUE" Foreground="#9CDCFE" FontWeight="Bold" Margin="4,0,0,0"/>
                                 </Grid>
                             </Border>
 
@@ -246,26 +263,34 @@
                                                               ItemsSource="{Binding Children}">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="160"/>
-                                                <ColumnDefinition Width="260"/>
-                                                <ColumnDefinition Width="110"/>
+                                                <ColumnDefinition Width="{Binding DataContext.Col0Width, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="{Binding DataContext.Col1Width, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="{Binding DataContext.Col2Width, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                                <ColumnDefinition Width="4"/>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
-                                            <!-- 수정 2: TYPE 먼저, 수정 6: TextBox로 드래그 복사 가능 -->
-                                            <TextBox Grid.Column="0" Text="{Binding TypeName}" IsReadOnly="True"
-                                                     Background="Transparent" BorderThickness="0" IsTabStop="False"
-                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
-                                                     Foreground="#4EC9B0"/>
-                                            <TextBox Grid.Column="1" Text="{Binding Name}" IsReadOnly="True"
-                                                     Background="Transparent" BorderThickness="0" IsTabStop="False"
-                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
-                                                     Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
-                                            <!-- 수정 2: SIZE(+offset) 통합 -->
-                                            <TextBox Grid.Column="2" Text="{Binding SizeDisplay, Mode=OneWay}" IsReadOnly="True"
-                                                     Background="Transparent" BorderThickness="0" IsTabStop="False"
+                                            <!-- Column 0: SIZE (+offset) -->
+                                            <TextBox Grid.Column="0" Text="{Binding SizeDisplay, Mode=OneWay}" IsReadOnly="True"
+                                                     Background="Transparent" BorderThickness="0,0,1,0" BorderBrush="#333" IsTabStop="False"
                                                      FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
                                                      Foreground="#B5CEA8"/>
-                                            <TextBox Grid.Column="3" Text="{Binding Value}" IsReadOnly="True"
+                                            <Border Grid.Column="1"/>
+                                            <!-- Column 2: TYPE -->
+                                            <TextBox Grid.Column="2" Text="{Binding TypeName}" IsReadOnly="True"
+                                                     Background="Transparent" BorderThickness="0,0,1,0" BorderBrush="#333" IsTabStop="False"
+                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
+                                                     Foreground="#4EC9B0"/>
+                                            <Border Grid.Column="3"/>
+                                            <!-- Column 4: NAME -->
+                                            <TextBox Grid.Column="4" Text="{Binding Name}" IsReadOnly="True"
+                                                     Background="Transparent" BorderThickness="0,0,1,0" BorderBrush="#333" IsTabStop="False"
+                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
+                                                     Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
+                                            <Border Grid.Column="5"/>
+                                            <!-- Column 6: VALUE -->
+                                            <TextBox Grid.Column="6" Text="{Binding Value}" IsReadOnly="True"
                                                      Background="Transparent" BorderThickness="0" IsTabStop="False"
                                                      FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
                                                      Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
@@ -279,28 +304,19 @@
             </TabControl.ContentTemplate>
         </TabControl>
 
-        <!-- ═══ 검색 결과 패널 ═══ -->
-        <Border Grid.Row="4" Background="#1E1E1E" BorderBrush="#444" BorderThickness="0,1,0,0"
-                Visibility="{Binding IsSearchPanelVisible, Converter={x:Static local:BoolToVisConverter.Instance}}">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-
-                <!-- 검색 결과 헤더 -->
-                <Border Grid.Row="0" Background="#252526" Padding="10,4">
-                    <Grid>
-                        <TextBlock Text="검색 결과" Foreground="#9CDCFE" FontWeight="Bold"
-                                   HorizontalAlignment="Left" VerticalAlignment="Center"/>
-                        <Button Content="닫기" Style="{StaticResource DangerBtn}" HorizontalAlignment="Right"
-                                Command="{Binding CloseSearchCommand}"/>
-                    </Grid>
-                </Border>
-
-                <!-- DataGrid -->
-                <DataGrid Grid.Row="1" x:Name="SearchResultGrid"
-                          ItemsSource="{Binding SearchResults}"
+        <!-- ═══ 검색 결과 패널 (Expander) ═══ -->
+        <Expander Grid.Row="4" Header="검색 결과" IsExpanded="{Binding IsSearchExpanded}"
+                  Background="#1E1E1E" BorderBrush="#444" BorderThickness="0,1,0,0">
+            <Grid Background="#1E1E1E">
+                <Grid.Resources>
+                    <CollectionViewSource x:Key="SearchResultsView" Source="{Binding SearchResults}">
+                        <CollectionViewSource.GroupDescriptions>
+                            <PropertyGroupDescription PropertyName="TabName"/>
+                        </CollectionViewSource.GroupDescriptions>
+                    </CollectionViewSource>
+                </Grid.Resources>
+                <DataGrid x:Name="SearchResultGrid"
+                          ItemsSource="{Binding Source={StaticResource SearchResultsView}}"
                           AutoGenerateColumns="False"
                           IsReadOnly="True"
                           SelectionMode="Single"
@@ -313,10 +329,25 @@
                           AlternatingRowBackground="#252526"
                           HeadersVisibility="Column"
                           CanUserResizeRows="False"
-                          MaxHeight="180"
+                          Height="200"
                           FontFamily="Consolas"
                           FontSize="11"
                           MouseDoubleClick="SearchResult_DoubleClick">
+                    <DataGrid.GroupStyle>
+                        <GroupStyle>
+                            <GroupStyle.HeaderTemplate>
+                                <DataTemplate>
+                                    <Expander IsExpanded="True">
+                                        <Expander.Header>
+                                            <TextBlock Text="{Binding Name}" Foreground="#9CDCFE" FontWeight="Bold"
+                                                       FontFamily="Consolas" FontSize="12"/>
+                                        </Expander.Header>
+                                        <ItemsPresenter/>
+                                    </Expander>
+                                </DataTemplate>
+                            </GroupStyle.HeaderTemplate>
+                        </GroupStyle>
+                    </DataGrid.GroupStyle>
                     <DataGrid.ColumnHeaderStyle>
                         <Style TargetType="DataGridColumnHeader">
                             <Setter Property="Background" Value="#2D2D2D"/>
@@ -343,6 +374,6 @@
                     </DataGrid.Columns>
                 </DataGrid>
             </Grid>
-        </Border>
+        </Expander>
     </Grid>
 </Window>
