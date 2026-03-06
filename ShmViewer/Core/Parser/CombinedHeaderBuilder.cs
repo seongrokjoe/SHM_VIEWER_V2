@@ -137,7 +137,10 @@ public static class CombinedHeaderBuilder
         {
             if (i + 1 < n && arr[i] == '/' && arr[i + 1] == '/')
             {
-                // 라인 코멘트: '\n' 전까지 공백으로
+                // 라인 코멘트: '//' 두 글자 포함하여 '\n' 전까지 전부 공백으로.
+                // '//'를 공백으로 바꾸지 않으면 SkipWs가 '//' 앞에서 멈춰
+                // struct Name // comment\n{ 형태에서 '{' 를 찾지 못하는 버그 발생.
+                arr[i] = ' '; arr[i + 1] = ' ';
                 i += 2;
                 while (i < n && arr[i] != '\n') { arr[i] = ' '; i++; }
             }
