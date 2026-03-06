@@ -350,8 +350,15 @@ public class HeaderParserService
         }
 
         // Fallback: canonical kind
+        // 단, spelling이 사용자 정의 타입 이름(비-primitive)인 경우에는 신뢰하지 않음.
+        // Clang error recovery가 미선언 struct를 int로 대체했을 수 있으므로,
+        // spelling이 primitive가 아니면 Unresolved로 남겨 PostProcessSizes에서 해소.
+        bool spellingIsPrimitive = string.IsNullOrEmpty(spelling)
+            || TypeDatabase.GetPrimitive(spelling) != PrimitiveKind.None
+            || TypeDatabase.GetPrimitive(resolvedAlias) != PrimitiveKind.None;
+
         var prim = CanonicalKindToPrimitive(canonElem.kind);
-        if (prim != PrimitiveKind.None)
+        if (prim != PrimitiveKind.None && spellingIsPrimitive)
         {
             member.TypeName = spelling;
             member.Primitive = prim;
