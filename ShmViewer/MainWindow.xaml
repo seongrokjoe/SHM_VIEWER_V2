@@ -219,14 +219,14 @@
                             </Grid.RowDefinitions>
 
                             <!-- Column Header with GridSplitters -->
-                            <Border Grid.Row="0" Background="#2D2D2D" Padding="22,4,4,4">
+                            <Border Grid.Row="0" Background="#2D2D2D" Padding="19,4,4,4">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="{Binding Col0Width, Mode=OneWay}"/>
+                                        <ColumnDefinition Width="{Binding DataContext.Col0Width, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"/>
                                         <ColumnDefinition Width="4"/>
-                                        <ColumnDefinition Width="{Binding Col1Width, Mode=OneWay}"/>
+                                        <ColumnDefinition Width="{Binding DataContext.Col1Width, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"/>
                                         <ColumnDefinition Width="4"/>
-                                        <ColumnDefinition Width="{Binding Col2Width, Mode=OneWay}"/>
+                                        <ColumnDefinition Width="{Binding DataContext.Col2Width, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"/>
                                         <ColumnDefinition Width="4"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
