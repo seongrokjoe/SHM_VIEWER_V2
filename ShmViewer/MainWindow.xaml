@@ -331,17 +331,28 @@
                           MouseDoubleClick="SearchResult_DoubleClick">
                     <DataGrid.GroupStyle>
                         <GroupStyle>
-                            <GroupStyle.HeaderTemplate>
-                                <DataTemplate>
-                                    <Expander IsExpanded="True">
-                                        <Expander.Header>
-                                            <TextBlock Text="{Binding Name}" Foreground="#9CDCFE" FontWeight="Bold"
-                                                       FontFamily="Consolas" FontSize="12"/>
-                                        </Expander.Header>
-                                        <ItemsPresenter/>
-                                    </Expander>
-                                </DataTemplate>
-                            </GroupStyle.HeaderTemplate>
+                            <GroupStyle.ContainerStyle>
+                                <Style TargetType="GroupItem">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="GroupItem">
+                                                <Expander IsExpanded="True" Background="#1E1E1E">
+                                                    <Expander.Header>
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding Name}" Foreground="#9CDCFE"
+                                                                       FontWeight="Bold" FontFamily="Consolas" FontSize="12"/>
+                                                            <TextBlock Text=" (" Foreground="#888" FontFamily="Consolas" FontSize="11"/>
+                                                            <TextBlock Text="{Binding ItemCount}" Foreground="#888" FontFamily="Consolas" FontSize="11"/>
+                                                            <TextBlock Text="건)" Foreground="#888" FontFamily="Consolas" FontSize="11"/>
+                                                        </StackPanel>
+                                                    </Expander.Header>
+                                                    <ItemsPresenter/>
+                                                </Expander>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </GroupStyle.ContainerStyle>
                         </GroupStyle>
                     </DataGrid.GroupStyle>
                     <DataGrid.ColumnHeaderStyle>

@@ -32,29 +32,6 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    partial void OnTabsChanged(ObservableCollection<ShmTabViewModel> value)
-    {
-        // Subscribe to property changes in tabs to update CanRefreshHeaders and SearchScopeItems
-        UpdateSearchScopeItems();
-        value.CollectionChanged += (s, e) =>
-        {
-            OnPropertyChanged(nameof(CanRefreshHeaders));
-            UpdateSearchScopeItems();
-
-            // Subscribe to IsRunning changes for new tabs
-            if (e.NewItems != null)
-            {
-                foreach (ShmTabViewModel newTab in e.NewItems)
-                {
-                    newTab.PropertyChanged += (_, _) =>
-                    {
-                        OnPropertyChanged(nameof(CanRefreshHeaders));
-                    };
-                }
-            }
-        };
-    }
-
     // ─── 미발견 타입 재확인 ───
     private List<string> _lastUnresolvedTypes = new();
     [ObservableProperty] private bool _hasLastUnresolved;
@@ -92,6 +69,18 @@ public partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        // OnTabsChanged is never called because _tabs is field-initialized (setter is never invoked).
+        // Bootstrap SearchScopeItems and CollectionChanged subscription here directly.
+        UpdateSearchScopeItems();
+        Tabs.CollectionChanged += (s, e) =>
+        {
+            OnPropertyChanged(nameof(CanRefreshHeaders));
+            UpdateSearchScopeItems();
+            if (e.NewItems != null)
+                foreach (ShmTabViewModel newTab in e.NewItems)
+                    newTab.PropertyChanged += (_, _) => OnPropertyChanged(nameof(CanRefreshHeaders));
+        };
+
         var saved = HeaderPathsStorage.Load();
         if (saved.Count > 0)
         {
