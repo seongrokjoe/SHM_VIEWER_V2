@@ -32,6 +32,23 @@ enum eMAX_UNIT
 
 // ── 구조체 정의 (의존 순서) ──────────────────────────────────────
 
+struct KTempInfo
+{
+		long temp1;
+		long temp2;
+		long temp3;
+};
+
+
+struct KPortInfo
+{
+    STR80     carrier_id;
+    long      job_seq;
+    char      terminal_msg[80];
+    KTempInfo tempInfo[2];      // fix: KPoupInfo → KFoupInfo
+};
+
+
 struct KFoupInfo
 {
     long src_port;
@@ -52,20 +69,7 @@ struct tagCtc {
 		
 		char	io_value[MAX_CTC_PIO];
 };
-struct KPortInfo
-{
-    STR80     carrier_id;
-    long      job_seq;
-    char      terminal_msg[80];
-    KTempInfo11 tempInfo[2];      // fix: KPoupInfo → KFoupInfo
-};
 
-struct KTempInfo
-{
-		long temp1;
-		long temp2;
-		long temp3;
-};
 struct KSystem
 {
     long alarm;

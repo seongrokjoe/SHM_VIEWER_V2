@@ -355,6 +355,9 @@ public partial class MainViewModel : ObservableObject
 
         foreach (var tab in tabsToSearch)
         {
+            // 검색 전 lazy 노드를 모두 펼쳐 FlatNodes를 완전한 상태로 만든다
+            tab.MaterializeLazy();
+
             // Use flat index for faster search on currently loaded nodes
             foreach (var node in tab.FlatNodes)
             {

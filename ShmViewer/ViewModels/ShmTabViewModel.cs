@@ -263,5 +263,27 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         FlattenNodes(newlyExpandedNode, FlatNodes);
     }
 
+    /// <summary>
+    /// 검색 전 호출 — 모든 lazy 노드를 강제 펼쳐 FlatNodes를 완전하게 만든다.
+    /// </summary>
+    public void MaterializeLazy()
+    {
+        bool anyExpanded;
+        do
+        {
+            anyExpanded = false;
+            foreach (var node in FlatNodes.ToList())
+            {
+                if (node.IsLazy)
+                {
+                    node.ExpandLoad();
+                    anyExpanded = true;
+                }
+            }
+            if (anyExpanded)
+                RebuildFlatIndex();
+        } while (anyExpanded);
+    }
+
     public void Dispose() => StopTimer();
 }
