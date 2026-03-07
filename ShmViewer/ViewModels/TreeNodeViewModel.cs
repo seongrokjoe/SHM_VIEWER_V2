@@ -44,6 +44,15 @@ public partial class TreeNodeViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Refresh시 lazy 노드의 pending 데이터를 최신화한다 (아직 펼쳐지지 않은 경우).
+    /// </summary>
+    public void UpdatePendingData(byte[] data)
+    {
+        if (IsLazy)
+            _pendingData = data;
+    }
+
+    /// <summary>
     /// Expand lazy node - remove dummy and build actual children.
     /// </summary>
     public void ExpandLoad()

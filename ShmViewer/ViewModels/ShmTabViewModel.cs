@@ -189,11 +189,11 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         try
         {
             var data = _reader.ReadSnapshot(ShmName, _rootType.TotalSize);
-            var root = _mapper.Map(data, _rootType);
 
             Application.Current?.Dispatcher.Invoke(() =>
             {
-                UpdateNodes(RootNodes, root.Children);
+                if (RootNodes.Count > 0)
+                    _mapper.RefreshValues(RootNodes[0], data);
                 LastRefreshTime = DateTime.Now.ToString("HH:mm:ss.fff");
             });
         }
@@ -203,17 +203,6 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
             {
                 StatusText = $"⚠️ 갱신 실패: {ex.Message}";
             });
-        }
-    }
-
-    private static void UpdateNodes(ObservableCollection<TreeNodeViewModel> existing,
-        ObservableCollection<TreeNodeViewModel> updated)
-    {
-        for (int i = 0; i < Math.Min(existing.Count, updated.Count); i++)
-        {
-            existing[i].Value = updated[i].Value;
-            if (existing[i].Children.Count > 0)
-                UpdateNodes(existing[i].Children, updated[i].Children);
         }
     }
 

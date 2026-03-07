@@ -7,8 +7,34 @@ namespace ShmViewer.Core.Mapper;
 public class DataMapper
 {
     private readonly TypeDatabase _db;
+    private const int LazyArrayThreshold = 100;
 
     public DataMapper(TypeDatabase db) => _db = db;
+
+    /// <summary>
+    /// 기존 트리를 재사용하여 새 byte[]로 값만 갱신한다.
+    /// 아직 펼쳐지지 않은 lazy 노드는 _pendingData만 최신화한다.
+    /// </summary>
+    public void RefreshValues(TreeNodeViewModel node, byte[] data)
+    {
+        if (node.IsLazy)
+        {
+            node.UpdatePendingData(data);
+            return;
+        }
+
+        if (node.Children.Count == 0)
+        {
+            // 리프 노드 — MemberInfo가 있으면 값 갱신
+            if (node.MemberInfo != null)
+                node.Value = ReadValue(data, node.MemberInfo, node.Offset);
+        }
+        else
+        {
+            foreach (var child in node.Children)
+                RefreshValues(child, data);
+        }
+    }
 
     // 수정 1: SHM 연결 없이 빈 구조 트리 생성 (모든 값 "-")
     public TreeNodeViewModel MapEmpty(TypeInfo rootType)
@@ -133,7 +159,34 @@ public class DataMapper
         // char[] → show as string
         if (member.Primitive == PrimitiveKind.Char || member.Primitive == PrimitiveKind.UChar)
         {
+            node.MemberInfo = member;  // RefreshValues에서 재읽기 가능하도록
             node.Value = ReadCharArray(data, baseOffset + member.Offset, member.Size, member.IsSpare);
+            return node;
+        }
+
+        // 대형 struct 배열 → lazy loading
+        if (member.ResolvedType != null && member.ArrayCount > LazyArrayThreshold)
+        {
+            var pending = Enumerable.Range(0, member.ArrayCount).Select(i =>
+            {
+                var elemRelOffset = member.Offset + i * elemSize;
+                return (new MemberInfo
+                {
+                    Name = $"[{i}]",
+                    TypeName = member.TypeName,
+                    ResolvedType = member.ResolvedType,
+                    ResolvedEnum = member.ResolvedEnum,
+                    Primitive = member.Primitive,
+                    IsPointer = member.IsPointer,
+                    Offset = elemRelOffset,
+                    Size = elemSize,
+                    ArrayCount = 1,
+                    ArrayDims = Array.Empty<int>(),
+                    BitFieldWidth = member.BitFieldWidth,
+                    BitFieldOffset = member.BitFieldOffset
+                }, baseOffset);
+            }).ToList();
+            node.SetLazy(pending, data, this);
             return node;
         }
 

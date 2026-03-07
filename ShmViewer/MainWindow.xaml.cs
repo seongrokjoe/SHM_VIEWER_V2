@@ -20,15 +20,11 @@ public partial class MainWindow : Window
         _vm = new MainViewModel();
         DataContext = _vm;
 
-        // Add lazy loading event handler
+        // Add lazy loading event handler (on Window so all tabs' TreeViews are covered)
         this.Loaded += (s, e) =>
         {
-            var treeView = FindVisualChild<TreeView>(this);
-            if (treeView != null)
-            {
-                treeView.AddHandler(TreeViewItem.ExpandedEvent,
-                    new RoutedEventHandler(TreeViewItem_Expanded));
-            }
+            this.AddHandler(TreeViewItem.ExpandedEvent,
+                new RoutedEventHandler(TreeViewItem_Expanded));
 
             // Setup search results grouping
             SetupSearchResultsGrouping();
