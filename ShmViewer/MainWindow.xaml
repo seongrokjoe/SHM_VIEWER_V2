@@ -89,7 +89,7 @@
                         <TextBox x:Name="SearchBox" Width="150" Margin="0,0,4,0"
                                  Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
                                  KeyDown="SearchBox_KeyDown"/>
-                        <ComboBox Width="100" Margin="0,0,4,0" ItemsSource="{Binding SearchScopeItems}"
+                        <ComboBox Width="100" Margin="0,0,4,0" ItemsSource="{Binding SearchScopeItems, Mode=OneWay}"
                                   SelectedItem="{Binding SelectedSearchScope}"
                                   Background="#3C3C3C" Foreground="#D4D4D4"
                                   FontFamily="Consolas" FontSize="11"/>
@@ -98,7 +98,7 @@
                     </StackPanel>
                 </Grid>
 
-                <ItemsControl Grid.Row="1" ItemsSource="{Binding HeaderFiles}" Margin="0,6,0,0">
+                <ItemsControl Grid.Row="1" ItemsSource="{Binding HeaderFiles, Mode=OneWay}" Margin="0,6,0,0">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                             <WrapPanel/>
@@ -164,7 +164,7 @@
 
         <!-- ═══ Tab Area ═══ -->
         <TabControl Grid.Row="3" Background="#1E1E1E" BorderBrush="#444"
-                    ItemsSource="{Binding Tabs}"
+                    ItemsSource="{Binding Tabs, Mode=OneWay}"
                     SelectedItem="{Binding SelectedTab}">
             <TabControl.ItemTemplate>
                 <DataTemplate DataType="{x:Type vm:ShmTabViewModel}">
@@ -241,7 +241,7 @@
                             </Border>
 
                             <!-- TreeView -->
-                            <TreeView Grid.Row="1" ItemsSource="{Binding RootNodes}"
+                            <TreeView Grid.Row="1" ItemsSource="{Binding RootNodes, Mode=OneWay}"
                                       Background="#1E1E1E" BorderThickness="0"
                                       x:Name="ShmTree"
                                       MouseRightButtonUp="TreeView_MouseRightButtonUp">
@@ -260,7 +260,7 @@
                                 </TreeView.Resources>
                                 <TreeView.ItemTemplate>
                                     <HierarchicalDataTemplate DataType="{x:Type vm:TreeNodeViewModel}"
-                                                              ItemsSource="{Binding Children}">
+                                                              ItemsSource="{Binding Children, Mode=OneWay}">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="{Binding DataContext.Col0Width, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"/>
