@@ -32,6 +32,11 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     [NotifyPropertyChangedFor(nameof(CanRun))]
     private bool _isRunning;
 
+    [ObservableProperty] private List<string> _unresolvedTypes = new();
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRun))]
+    private bool _hasUnresolvedTypes;
+
     [ObservableProperty] private bool _isActiveTab;
 
     public bool CanRun => IsTreeBuilt && !IsRunning;
@@ -73,15 +78,10 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
             if (unresolvedTypes.Count > 0)
             {
                 IsStatusError = true;
-                StatusText = $"❌ 미발견 타입이 있습니다. 자세히 보기를 클릭하세요.";
+                StatusText = "❌ 미발견 타입이 있습니다. 자세히 보기를 클릭하세요.";
                 IsTreeBuilt = false;
-
-                // Show dialog with unresolved types
-                Application.Current?.Dispatcher.Invoke(() =>
-                {
-                    var dialog = new LoadFailDialog(unresolvedTypes);
-                    dialog.ShowDialog();
-                });
+                HasUnresolvedTypes = true;
+                UnresolvedTypes = unresolvedTypes;
                 return;
             }
 
@@ -170,6 +170,14 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     public void ManualRefresh() => Refresh();
+
+    [RelayCommand]
+    private void ShowUnresolved()
+    {
+        if (UnresolvedTypes.Count == 0) return;
+        var dialog = new LoadFailDialog(UnresolvedTypes);
+        dialog.ShowDialog();
+    }
 
     private void Refresh()
     {

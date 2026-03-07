@@ -257,6 +257,14 @@ public partial class MainViewModel : ObservableObject
         // 수정 1: SHM 연결 없이 빈 트리 생성
         tab.BuildTree();
 
+        if (tab.HasUnresolvedTypes)
+        {
+            new LoadFailDialog(new Dictionary<string, List<string>>
+            {
+                [tab.TabTitle] = tab.UnresolvedTypes
+            }).ShowDialog();
+        }
+
         // 수정 7: 탭 목록 저장
         SaveTabs();
     }
@@ -324,6 +332,14 @@ public partial class MainViewModel : ObservableObject
         // 유효하지 않은 항목 제거 후 재저장
         if (validEntries.Count != entries.Count)
             ShmTabsStorage.Save(validEntries);
+
+        // 미발견 타입이 있는 탭들을 하나의 팝업으로 통합 표시
+        var failedTabs = Tabs
+            .Where(t => t.HasUnresolvedTypes)
+            .ToDictionary(t => t.TabTitle, t => t.UnresolvedTypes);
+
+        if (failedTabs.Count > 0)
+            new LoadFailDialog(failedTabs).ShowDialog();
     }
 
     // ─── 검색 ───

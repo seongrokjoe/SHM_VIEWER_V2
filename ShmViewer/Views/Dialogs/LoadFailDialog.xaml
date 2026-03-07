@@ -27,15 +27,41 @@
 
         <Border Grid.Row="1" Background="#2D2D2D" BorderBrush="#444" BorderThickness="1">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <ItemsControl x:Name="TypeList" Margin="8">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding}"
-                                       Foreground="White" FontFamily="Consolas"
-                                       FontSize="12" Margin="0,2" TextWrapping="Wrap"/>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                <StackPanel Margin="8">
+                    <!-- 단일 탭용 목록 -->
+                    <ItemsControl x:Name="TypeList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}"
+                                           Foreground="White" FontFamily="Consolas"
+                                           FontSize="12" Margin="0,2" TextWrapping="Wrap"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- 다중 탭 통합 표시용 (기본 Collapsed) -->
+                    <ItemsControl x:Name="TabGroupPanel" Visibility="Collapsed">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,4,0,8">
+                                    <TextBlock Text="{Binding TabName}"
+                                               Foreground="#9CDCFE" FontWeight="Bold"
+                                               FontSize="12" Margin="0,0,0,4"/>
+                                    <ItemsControl ItemsSource="{Binding Items}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding}"
+                                                           Foreground="White" FontFamily="Consolas"
+                                                           FontSize="11" Margin="8,1,0,1"
+                                                           TextWrapping="Wrap"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
             </ScrollViewer>
         </Border>
 

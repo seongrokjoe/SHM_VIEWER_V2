@@ -205,6 +205,9 @@
                                 <Button Content="Refresh" Style="{StaticResource DarkBtn}"
                                         Command="{Binding ManualRefreshCommand}"
                                         Visibility="{Binding IsManualMode, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+                                <Button Content="자세히 보기" Style="{StaticResource DarkBtn}" Margin="10,0,0,0"
+                                        Command="{Binding ShowUnresolvedCommand}"
+                                        Visibility="{Binding HasUnresolvedTypes, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
                             </StackPanel>
                         </Border>
 
