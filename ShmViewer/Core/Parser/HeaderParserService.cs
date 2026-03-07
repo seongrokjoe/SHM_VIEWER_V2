@@ -282,8 +282,13 @@ public class HeaderParserService
             if (elemCanonical.kind == CXTypeKind.CXType_ConstantArray)
             {
                 dims.Add((int)elemCanonical.ArraySize);
-                elemType = elemType.ArrayElementType;      // 원본 타입 체인에서 추출 (spelling 보존)
-                elemCanonical = elemType.CanonicalType;
+                // [FIX] typedef-of-array인 경우 elemType.ArrayElementType이 Invalid를 반환.
+                // elemType이 실제 배열 타입일 때만 원본 체인에서 추출하고, 아닌 경우 canonical에서 fallback.
+                var canonElem = elemCanonical.ArrayElementType;
+                elemType = elemType.kind == CXTypeKind.CXType_ConstantArray
+                    ? elemType.ArrayElementType
+                    : canonElem;
+                elemCanonical = canonElem;
             }
             else if (elemCanonical.kind == CXTypeKind.CXType_VariableArray
                   || elemCanonical.kind == CXTypeKind.CXType_DependentSizedArray)
@@ -292,8 +297,13 @@ public class HeaderParserService
                 var dim = TryResolveVlaDim(elemCanonical, db);
                 if (dim <= 0) break;
                 dims.Add(dim);
-                elemType = elemType.ArrayElementType;
-                elemCanonical = elemType.CanonicalType;
+                // [FIX] 동일한 fallback 처리
+                var canonElem = elemCanonical.ArrayElementType;
+                elemType = (elemType.kind == CXTypeKind.CXType_VariableArray
+                         || elemType.kind == CXTypeKind.CXType_DependentSizedArray)
+                    ? elemType.ArrayElementType
+                    : canonElem;
+                elemCanonical = canonElem;
             }
             else
             {
