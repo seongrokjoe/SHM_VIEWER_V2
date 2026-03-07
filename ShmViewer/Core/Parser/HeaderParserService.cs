@@ -190,7 +190,7 @@ public class HeaderParserService
         if (db.Structs.ContainsKey(name)) return;
 
         var sizeBytes = cursor.Type.SizeOf;
-        if (sizeBytes < 0) return; // incomplete/forward declaration
+        if (sizeBytes <= 0) return; // incomplete/forward declaration or error-recovery stub (size==0)
 
         var typeInfo = new TypeInfo
         {

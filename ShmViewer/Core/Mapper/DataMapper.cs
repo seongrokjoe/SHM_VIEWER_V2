@@ -375,8 +375,11 @@ public class DataMapper
 
             if (member.ResolvedType != null && !member.IsPointer)
             {
-                // Recursively check nested struct members
-                CollectUnresolvedRecursive(member.ResolvedType, path, unresolved);
+                // TotalSize==0 && Members empty → Clang error-recovery stub → treat as unresolved
+                if (member.ResolvedType.TotalSize == 0 && member.ResolvedType.Members.Count == 0)
+                    unresolved.Add($"{path} → {member.TypeName} 미발견");
+                else
+                    CollectUnresolvedRecursive(member.ResolvedType, path, unresolved);
             }
             else if (member.Primitive == PrimitiveKind.None && member.ResolvedType == null)
             {
