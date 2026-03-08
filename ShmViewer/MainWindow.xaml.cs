@@ -111,19 +111,38 @@ public partial class MainWindow : Window
 
         try
         {
-            var reader = new Core.Shm.ShmReader();
-            if (selectedTab.IsLoaded && !string.IsNullOrEmpty(selectedTab.ShmName))
-            {
-                var data = reader.ReadSnapshot(selectedTab.ShmName,
-                    node.Offset + node.Size + 64);
+            byte[]? data = null;
 
-                var popup = new DetailPopup(node, data);
-                popup.Left = SystemParameters.PrimaryScreenWidth / 2 - 210;
-                popup.Top = SystemParameters.PrimaryScreenHeight / 2 - 200;
-                popup.Show();
+            // SHM이 연결된 경우(Running) 실시간 데이터 읽기
+            if (selectedTab.IsRunning && !string.IsNullOrEmpty(selectedTab.ShmName))
+            {
+                var reader = new Core.Shm.ShmReader();
+                data = reader.ReadSnapshot(selectedTab.ShmName,
+                    node.Offset + node.Size + 64);
             }
+
+            // 데이터가 없으면 빈 배열로 팝업 (구조 정보만 표시)
+            data ??= new byte[node.Offset + node.Size + 64];
+
+            var popup = new DetailPopup(node, data);
+            popup.Left = SystemParameters.PrimaryScreenWidth / 2 - 210;
+            popup.Top = SystemParameters.PrimaryScreenHeight / 2 - 200;
+            popup.Show();
         }
-        catch { /* If SHM read fails, just don't show popup */ }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"바이너리 확인 실패: {ex.Message}", "오류",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void TreeView_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var source = e.OriginalSource as DependencyObject;
+        while (source != null && source is not TreeViewItem)
+            source = VisualTreeHelper.GetParent(source);
+        if (source is TreeViewItem tvi)
+            tvi.IsSelected = true;
     }
 
     private void SearchBox_KeyDown(object sender, KeyEventArgs e)

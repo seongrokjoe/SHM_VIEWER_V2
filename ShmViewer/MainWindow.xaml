@@ -277,6 +277,7 @@
                                       Background="#1E1E1E" BorderThickness="0"
                                       x:Name="ShmTree"
                                       MouseRightButtonUp="TreeView_MouseRightButtonUp"
+                                      PreviewMouseLeftButtonDown="TreeView_PreviewMouseLeftButtonDown"
                                       VirtualizingStackPanel.IsVirtualizing="True"
                                       VirtualizingStackPanel.VirtualizationMode="Recycling"
                                       VirtualizingStackPanel.ScrollUnit="Pixel">
