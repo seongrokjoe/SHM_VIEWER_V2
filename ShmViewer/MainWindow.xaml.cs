@@ -129,23 +129,71 @@ public partial class MainWindow : Window
 
         // 이전 하이라이트 초기화
         foreach (var r in _vm.SearchResults)
-            r.Node.IsHighlighted = false;
+            if (r.Node != null) r.Node.IsHighlighted = false;
 
         // 탭 전환
         _vm.SelectedTab = result.Tab;
 
-        // 조상 노드 펼치기
-        foreach (var ancestor in result.AncestorPath)
-            ancestor.IsExpanded = true;
-
-        // 대상 노드 하이라이트
-        result.Node.IsHighlighted = true;
-
-        // UI 업데이트 후 BringIntoView
+        // 탭 전환 완료 후 경로 기반으로 트리 노드 탐색 및 이동
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
-            BringNodeIntoView(result.Node);
+            var node = FindNodeByPath(result.Tab, result.NodePath, out var ancestorPath);
+            if (node == null) return;
+
+            result.Node = node;
+            result.AncestorPath = ancestorPath;
+
+            // 조상 노드 펼치기
+            foreach (var ancestor in result.AncestorPath)
+                ancestor.IsExpanded = true;
+
+            // 대상 노드 하이라이트
+            result.Node.IsHighlighted = true;
+
+            // UI 업데이트 후 BringIntoView
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+            {
+                BringNodeIntoView(result.Node);
+            });
         });
+    }
+
+    /// <summary>
+    /// NodePath("m_abc.x") 문자열을 기반으로 트리를 순회하여 해당 TreeNodeViewModel을 찾는다.
+    /// Lazy 노드는 자동으로 ExpandLoad()를 호출한다.
+    /// </summary>
+    private static TreeNodeViewModel? FindNodeByPath(
+        ShmTabViewModel tab, string nodePath, out List<TreeNodeViewModel> ancestorPath)
+    {
+        ancestorPath = new List<TreeNodeViewModel>();
+        if (tab.RootNodes.Count == 0) return null;
+
+        var root = tab.RootNodes[0];
+
+        if (string.IsNullOrEmpty(nodePath))
+            return root;
+
+        var parts = nodePath.Split('.');
+        var current = root;
+
+        foreach (var part in parts)
+        {
+            // Lazy 노드이면 먼저 펼쳐서 자식 생성
+            if (current.IsLazy)
+                current.ExpandLoad();
+
+            // "[n]" 같은 배열 플레이스홀더 처리: "[" 이전까지만 이름으로 사용
+            var name = part.Contains('[') ? part[..part.IndexOf('[')] : part;
+            if (string.IsNullOrEmpty(name)) continue;
+
+            var child = current.Children.FirstOrDefault(c => c.Name == name);
+            if (child == null) break; // 더 이상 내려갈 수 없으면 현재 노드 반환
+
+            ancestorPath.Add(current);
+            current = child;
+        }
+
+        return current;
     }
 
     private void BringNodeIntoView(TreeNodeViewModel node)
