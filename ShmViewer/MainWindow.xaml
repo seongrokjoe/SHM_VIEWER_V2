@@ -49,6 +49,30 @@
             <Setter Property="Margin" Value="0,0,8,0"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
+        <!-- Expander toggle button for tree (▶/▼) -->
+        <Style x:Key="ExpanderToggleStyle" TargetType="ToggleButton">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Width" Value="16"/>
+            <Setter Property="Height" Value="16"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="Transparent" Width="16" Height="16">
+                            <Path x:Name="Arrow" Fill="#D4D4D4" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Data="M 0,0 L 6,4 L 0,8 Z"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Arrow" Property="Data" Value="M 0,0 L 8,0 L 4,6 Z"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Arrow" Property="Fill" Value="#FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -224,7 +248,7 @@
                             </Grid.RowDefinitions>
 
                             <!-- Column Header with GridSplitters -->
-                            <Border Grid.Row="0" Background="#2D2D2D" Padding="19,4,4,4">
+                            <Border Grid.Row="0" Background="#2D2D2D" Padding="4,4,4,4">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="{Binding DataContext.Col0Width, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"/>
@@ -266,9 +290,30 @@
                                         <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
                                         <Setter Property="Background" Value="Transparent"/>
                                         <Setter Property="Foreground" Value="#D4D4D4"/>
-                                        <Setter Property="Padding" Value="2,1"/>
+                                        <Setter Property="Padding" Value="0"/>
                                         <Setter Property="VirtualizingStackPanel.IsVirtualizing" Value="True"/>
                                         <Setter Property="VirtualizingStackPanel.VirtualizationMode" Value="Recycling"/>
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="TreeViewItem">
+                                                    <StackPanel>
+                                                        <Border x:Name="Bd"
+                                                                Background="{TemplateBinding Background}"
+                                                                Padding="2,1">
+                                                            <ContentPresenter x:Name="PART_Header"
+                                                                              ContentSource="Header"
+                                                                              HorizontalAlignment="Stretch"/>
+                                                        </Border>
+                                                        <ItemsPresenter x:Name="ItemsHost" Visibility="Collapsed"/>
+                                                    </StackPanel>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsExpanded" Value="True">
+                                                            <Setter TargetName="ItemsHost" Property="Visibility" Value="Visible"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
                                                 <Setter Property="Background" Value="#264F78"/>
@@ -295,11 +340,19 @@
                                                      FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
                                                      Foreground="#B5CEA8"/>
                                             <Border Grid.Column="1"/>
-                                            <!-- Column 2: TYPE -->
-                                            <TextBox Grid.Column="2" Text="{Binding TypeName}" IsReadOnly="True"
-                                                     Background="Transparent" BorderThickness="0,0,1,0" BorderBrush="#333" IsTabStop="False"
-                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
-                                                     Foreground="#4EC9B0"/>
+                                            <!-- Column 2: TYPE (with tree expander + level indent) -->
+                                            <Border Grid.Column="2" BorderThickness="0,0,1,0" BorderBrush="#333">
+                                                <StackPanel Orientation="Horizontal"
+                                                            Margin="{Binding Level, Converter={x:Static local:LevelToMarginConverter.Instance}}">
+                                                    <ToggleButton Style="{StaticResource ExpanderToggleStyle}"
+                                                                  IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource AncestorType=TreeViewItem}}"
+                                                                  Visibility="{Binding HasChildren, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+                                                    <TextBox Text="{Binding TypeName}" IsReadOnly="True"
+                                                             Background="Transparent" BorderThickness="0" IsTabStop="False"
+                                                             FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
+                                                             Foreground="#4EC9B0"/>
+                                                </StackPanel>
+                                            </Border>
                                             <Border Grid.Column="3"/>
                                             <!-- Column 4: NAME -->
                                             <TextBox Grid.Column="4" Text="{Binding Name}" IsReadOnly="True"

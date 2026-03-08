@@ -73,3 +73,11 @@ public class EnumToBoolConverter : IValueConverter
         return Binding.DoNothing;
     }
 }
+
+public class LevelToMarginConverter : IValueConverter
+{
+    public static readonly LevelToMarginConverter Instance = new();
+    public object Convert(object value, Type t, object p, CultureInfo c) =>
+        value is int level ? new Thickness(level * 16, 0, 0, 0) : new Thickness(0);
+    public object ConvertBack(object v, Type t, object p, CultureInfo c) => throw new NotImplementedException();
+}

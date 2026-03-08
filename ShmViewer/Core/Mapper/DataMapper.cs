@@ -55,7 +55,8 @@ public class DataMapper
             TypeName = rootType.Name,
             Offset = 0,
             Size = rootType.TotalSize,
-            Value = string.Empty
+            Value = string.Empty,
+            Level = 0
         };
 
         BuildChildren(root, data, rootType, 0);
@@ -66,18 +67,15 @@ public class DataMapper
     {
         foreach (var member in typeInfo.Members)
         {
+            TreeNodeViewModel child;
             if (member.ArrayDims.Length > 1)
-            {
-                parent.Children.Add(BuildMultiDimArrayNode(data, member, baseOffset, 0, 0));
-            }
+                child = BuildMultiDimArrayNode(data, member, baseOffset, 0, 0);
             else if (member.ArrayCount > 1)
-            {
-                parent.Children.Add(BuildArrayNode(data, member, baseOffset));
-            }
+                child = BuildArrayNode(data, member, baseOffset);
             else
-            {
-                parent.Children.Add(BuildNode(data, member, baseOffset));
-            }
+                child = BuildNode(data, member, baseOffset);
+            child.SetLevelRecursive(parent.Level + 1);
+            parent.Children.Add(child);
         }
     }
 

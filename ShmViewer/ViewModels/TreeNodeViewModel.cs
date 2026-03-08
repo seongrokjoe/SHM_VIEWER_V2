@@ -17,6 +17,7 @@ public partial class TreeNodeViewModel : ObservableObject
     [ObservableProperty] private bool _isSpare;
     [ObservableProperty] private bool _isHighlighted;
     [ObservableProperty] private bool _isLazy;
+    [ObservableProperty] private int _level;
 
     public MemberInfo? MemberInfo { get; set; }
     public ObservableCollection<TreeNodeViewModel> Children { get; } = new();
@@ -28,7 +29,29 @@ public partial class TreeNodeViewModel : ObservableObject
 
     public string OffsetDisplay => $"+{Offset}";
     public string SizeDisplay => $"{Size} (+{Offset})";
-    public bool HasChildren => Children.Count > 0;
+
+    private bool _hasChildren;
+    public bool HasChildren
+    {
+        get => _hasChildren;
+        private set => SetProperty(ref _hasChildren, value);
+    }
+
+    public TreeNodeViewModel()
+    {
+        Children.CollectionChanged += (_, _) => HasChildren = Children.Count > 0;
+    }
+
+    /// <summary>
+    /// Set this node's level and recursively propagate to all existing children.
+    /// Lazy (unexpanded) children will get correct levels via ExpandLoad.
+    /// </summary>
+    public void SetLevelRecursive(int level)
+    {
+        Level = level;
+        foreach (var child in Children)
+            child.SetLevelRecursive(level + 1);
+    }
 
     /// <summary>
     /// Set this node to lazy mode with a dummy child for expand arrow.
@@ -68,18 +91,15 @@ public partial class TreeNodeViewModel : ObservableObject
         int baseOffset = Offset;
         foreach (var (member, memberBaseOffset) in _pendingMemberInfos)
         {
+            TreeNodeViewModel child;
             if (member.ArrayDims.Length > 1)
-            {
-                Children.Add(_pendingMapper.BuildMultiDimArrayNode(_pendingData, member, memberBaseOffset, 0, 0));
-            }
+                child = _pendingMapper.BuildMultiDimArrayNode(_pendingData, member, memberBaseOffset, 0, 0);
             else if (member.ArrayCount > 1)
-            {
-                Children.Add(_pendingMapper.BuildArrayNode(_pendingData, member, memberBaseOffset));
-            }
+                child = _pendingMapper.BuildArrayNode(_pendingData, member, memberBaseOffset);
             else
-            {
-                Children.Add(_pendingMapper.BuildNode(_pendingData, member, memberBaseOffset));
-            }
+                child = _pendingMapper.BuildNode(_pendingData, member, memberBaseOffset);
+            child.SetLevelRecursive(Level + 1);
+            Children.Add(child);
         }
 
         // Clear pending data
@@ -112,17 +132,21 @@ public partial class TreeNodeViewModel : ObservableObject
         try
         {
             // 백그라운드 스레드에서 노드 빌드
+            var parentLevel = Level;
             var nodes = await Task.Run(() =>
             {
                 var result = new List<TreeNodeViewModel>();
                 foreach (var (member, baseOffset) in memberInfos)
                 {
+                    TreeNodeViewModel child;
                     if (member.ArrayDims.Length > 1)
-                        result.Add(mapper.BuildMultiDimArrayNode(data, member, baseOffset, 0, 0));
+                        child = mapper.BuildMultiDimArrayNode(data, member, baseOffset, 0, 0);
                     else if (member.ArrayCount > 1)
-                        result.Add(mapper.BuildArrayNode(data, member, baseOffset));
+                        child = mapper.BuildArrayNode(data, member, baseOffset);
                     else
-                        result.Add(mapper.BuildNode(data, member, baseOffset));
+                        child = mapper.BuildNode(data, member, baseOffset);
+                    child.SetLevelRecursive(parentLevel + 1);
+                    result.Add(child);
                 }
                 return result;
             });
