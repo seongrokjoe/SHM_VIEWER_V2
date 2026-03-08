@@ -12,6 +12,8 @@ namespace ShmViewer.ViewModels;
 
 public enum RefreshMode { Ms500, Ms1000, Ms5000, Manual }
 
+public record SearchEntry(string Name, string TypeName, int Offset, int Size, string FullPath);
+
 public partial class ShmTabViewModel : ObservableObject, IDisposable
 {
     private readonly ShmReader _reader = new();
@@ -48,6 +50,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<TreeNodeViewModel> RootNodes { get; } = new();
     public List<TreeNodeViewModel> FlatNodes { get; private set; } = new();
+    public List<SearchEntry> SearchIndex { get; private set; } = new();
 
     partial void OnRefreshModeChanged(RefreshMode value)
     {
@@ -92,6 +95,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
             // Rebuild flat index for search
             RebuildFlatIndex();
+            BuildSearchIndex();
 
             IsTreeBuilt = true;
             IsStatusError = false;
@@ -122,6 +126,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
             // Rebuild flat index for search
             RebuildFlatIndex();
+            BuildSearchIndex();
 
             IsTreeBuilt = true;
             IsRunning = true;
@@ -263,26 +268,33 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         FlattenNodes(newlyExpandedNode, FlatNodes);
     }
 
-    /// <summary>
-    /// 검색 전 호출 — 모든 lazy 노드를 강제 펼쳐 FlatNodes를 완전하게 만든다.
-    /// </summary>
-    public void MaterializeLazy()
+    private void BuildSearchIndex()
     {
-        bool anyExpanded;
-        do
+        SearchIndex = new List<SearchEntry>();
+        if (_rootType != null)
+            CollectMembers(_rootType, "", 0, new HashSet<string>());
+    }
+
+    private void CollectMembers(TypeInfo type, string path, int baseOffset, HashSet<string> visited)
+    {
+        if (!visited.Add(type.Name)) return;  // 순환 참조 방지
+
+        foreach (var member in type.Members)
         {
-            anyExpanded = false;
-            foreach (var node in FlatNodes.ToList())
+            var fullPath = string.IsNullOrEmpty(path) ? member.Name : $"{path}.{member.Name}";
+            var absOffset = baseOffset + member.Offset;
+            var displayType = member.ArrayCount > 1
+                ? $"{member.TypeName}[{member.ArrayCount}]"
+                : member.TypeName;
+
+            SearchIndex.Add(new SearchEntry(member.Name, displayType, absOffset, member.Size, fullPath));
+
+            if (member.ResolvedType != null && !member.IsPointer)
             {
-                if (node.IsLazy)
-                {
-                    node.ExpandLoad();
-                    anyExpanded = true;
-                }
+                var subPath = member.ArrayCount > 1 ? $"{fullPath}[n]" : fullPath;
+                CollectMembers(member.ResolvedType, subPath, absOffset, new HashSet<string>(visited));
             }
-            if (anyExpanded)
-                RebuildFlatIndex();
-        } while (anyExpanded);
+        }
     }
 
     public void Dispose() => StopTimer();

@@ -337,7 +337,7 @@ public partial class MainViewModel : ObservableObject
     private void Search()
     {
         foreach (var r in SearchResults)
-            r.Node.IsHighlighted = false;
+            if (r.Node != null) r.Node.IsHighlighted = false;
         SearchResults.Clear();
 
         if (string.IsNullOrWhiteSpace(SearchText))
@@ -355,32 +355,23 @@ public partial class MainViewModel : ObservableObject
 
         foreach (var tab in tabsToSearch)
         {
-            // 검색 전 lazy 노드를 모두 펼쳐 FlatNodes를 완전한 상태로 만든다
-            tab.MaterializeLazy();
-
-            // Use flat index for faster search on currently loaded nodes
-            foreach (var node in tab.FlatNodes)
+            // TypeInfo 기반 SearchIndex로 즉시 검색 (lazy 노드 미펼침)
+            foreach (var entry in tab.SearchIndex)
             {
-                bool match = node.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase)
-                          || node.TypeName.Contains(keyword, StringComparison.OrdinalIgnoreCase)
-                          || node.Value.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+                bool match = entry.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase)
+                          || entry.TypeName.Contains(keyword, StringComparison.OrdinalIgnoreCase);
 
                 if (match)
                 {
-                    var ancestorPath = BuildAncestorPath(node, tab);
-                    var path = ancestorPath.Count > 0
-                        ? string.Join(" > ", ancestorPath.Select(a => a.Name)) + " > " + node.Name
-                        : node.Name;
-
                     SearchResults.Add(new SearchResultViewModel
                     {
                         TabName = tab.TabTitle,
-                        NodePath = path,
-                        TypeName = node.TypeName,
-                        Value = node.Value,
+                        NodePath = entry.FullPath,
+                        TypeName = entry.TypeName,
+                        Value = string.Empty,
                         Tab = tab,
-                        Node = node,
-                        AncestorPath = ancestorPath
+                        Node = null,
+                        AncestorPath = new List<TreeNodeViewModel>()
                     });
                 }
             }
@@ -389,47 +380,11 @@ public partial class MainViewModel : ObservableObject
         IsSearchExpanded = SearchResults.Count > 0;
     }
 
-    private List<TreeNodeViewModel> BuildAncestorPath(TreeNodeViewModel node, ShmTabViewModel tab)
-    {
-        var ancestors = new List<TreeNodeViewModel>();
-
-        // Find ancestors by traversing the tree upward from root
-        foreach (var root in tab.RootNodes)
-        {
-            if (CollectAncestors(root, node, new List<TreeNodeViewModel>(), ancestors))
-                break;
-        }
-
-        return ancestors;
-    }
-
-    private bool CollectAncestors(TreeNodeViewModel current, TreeNodeViewModel target,
-        List<TreeNodeViewModel> path, List<TreeNodeViewModel> result)
-    {
-        // If we found the target, return true and set result
-        if (current == target)
-        {
-            result.AddRange(path);
-            return true;
-        }
-
-        // Search in children
-        foreach (var child in current.Children)
-        {
-            path.Add(current);
-            if (CollectAncestors(child, target, path, result))
-                return true;
-            path.RemoveAt(path.Count - 1);
-        }
-
-        return false;
-    }
-
     [RelayCommand]
     private void CloseSearch()
     {
         foreach (var r in SearchResults)
-            r.Node.IsHighlighted = false;
+            if (r.Node != null) r.Node.IsHighlighted = false;
         SearchResults.Clear();
         IsSearchExpanded = false;
         SearchText = string.Empty;

@@ -92,7 +92,13 @@
                         <ComboBox Width="100" Margin="0,0,4,0" ItemsSource="{Binding SearchScopeItems, Mode=OneWay}"
                                   SelectedItem="{Binding SelectedSearchScope}"
                                   Background="#3C3C3C" Foreground="#D4D4D4"
-                                  FontFamily="Consolas" FontSize="11"/>
+                                  FontFamily="Consolas" FontSize="11">
+                            <ComboBox.ItemContainerStyle>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="Foreground" Value="Black"/>
+                                </Style>
+                            </ComboBox.ItemContainerStyle>
+                        </ComboBox>
                         <Button Content="검색" Style="{StaticResource DarkBtn}"
                                 Command="{Binding SearchCommand}"/>
                     </StackPanel>
