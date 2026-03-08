@@ -310,6 +310,9 @@
                                                         <Trigger Property="IsExpanded" Value="True">
                                                             <Setter TargetName="ItemsHost" Property="Visibility" Value="Visible"/>
                                                         </Trigger>
+                                                        <Trigger Property="IsSelected" Value="True">
+                                                            <Setter TargetName="Bd" Property="Background" Value="#264F78"/>
+                                                        </Trigger>
                                                     </ControlTemplate.Triggers>
                                                 </ControlTemplate>
                                             </Setter.Value>

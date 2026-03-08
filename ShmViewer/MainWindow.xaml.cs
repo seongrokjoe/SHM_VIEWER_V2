@@ -77,7 +77,17 @@ public partial class MainWindow : Window
     private void TreeView_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (sender is not TreeView tree) return;
-        if (tree.SelectedItem is not TreeNodeViewModel node) return;
+
+        // VisualTree를 거슬러 올라가 클릭된 TreeViewItem 찾기
+        var source = e.OriginalSource as DependencyObject;
+        while (source != null && source is not TreeViewItem)
+            source = VisualTreeHelper.GetParent(source);
+        if (source is not TreeViewItem tvi) return;
+        if (tvi.DataContext is not TreeNodeViewModel node) return;
+
+        // 선택 상태도 업데이트
+        tvi.IsSelected = true;
+
         if (node.MemberInfo == null || node.MemberInfo.ResolvedType != null) return;
 
         // Show context menu
