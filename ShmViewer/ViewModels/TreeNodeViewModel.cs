@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using ShmViewer.Core.Mapper;
 using ShmViewer.Core.Model;
 using System.Collections.ObjectModel;
+using System.Windows.Input;
 
 namespace ShmViewer.ViewModels;
 
@@ -86,5 +87,60 @@ public partial class TreeNodeViewModel : ObservableObject
         _pendingData = null;
         _pendingMapper = null;
         IsLazy = false;
+    }
+
+    /// <summary>
+    /// 비동기 배치 확장 — UI 프리징 없이 대형 노드를 점진적으로 로드한다.
+    /// </summary>
+    public async Task ExpandLoadAsync()
+    {
+        if (!IsLazy || _pendingMemberInfos == null || _pendingData == null || _pendingMapper == null)
+            return;
+
+        // 재진입 방지: pending 상태 즉시 캡처 후 클리어
+        var mapper = _pendingMapper;
+        var data = _pendingData;
+        var memberInfos = _pendingMemberInfos;
+        _pendingMemberInfos = null;
+        _pendingData = null;
+        _pendingMapper = null;
+        IsLazy = false;
+
+        Children.Clear();
+        Mouse.OverrideCursor = Cursors.Wait;
+
+        try
+        {
+            // 백그라운드 스레드에서 노드 빌드
+            var nodes = await Task.Run(() =>
+            {
+                var result = new List<TreeNodeViewModel>();
+                foreach (var (member, baseOffset) in memberInfos)
+                {
+                    if (member.ArrayDims.Length > 1)
+                        result.Add(mapper.BuildMultiDimArrayNode(data, member, baseOffset, 0, 0));
+                    else if (member.ArrayCount > 1)
+                        result.Add(mapper.BuildArrayNode(data, member, baseOffset));
+                    else
+                        result.Add(mapper.BuildNode(data, member, baseOffset));
+                }
+                return result;
+            });
+
+            // 배치로 UI에 추가 (UI 응답성 유지)
+            const int batchSize = 500;
+            for (int i = 0; i < nodes.Count; i += batchSize)
+            {
+                var end = Math.Min(i + batchSize, nodes.Count);
+                for (int j = i; j < end; j++)
+                    Children.Add(nodes[j]);
+                if (end < nodes.Count)
+                    await Task.Delay(1); // UI 스레드 숨쉬기
+            }
+        }
+        finally
+        {
+            Mouse.OverrideCursor = null;
+        }
     }
 }

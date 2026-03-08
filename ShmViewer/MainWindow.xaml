@@ -91,7 +91,6 @@
                                  KeyDown="SearchBox_KeyDown"/>
                         <ComboBox Width="100" Margin="0,0,4,0" ItemsSource="{Binding SearchScopeItems, Mode=OneWay}"
                                   SelectedItem="{Binding SelectedSearchScope}"
-                                  Background="#3C3C3C" Foreground="#D4D4D4"
                                   FontFamily="Consolas" FontSize="11">
                             <ComboBox.ItemContainerStyle>
                                 <Style TargetType="ComboBoxItem">
@@ -253,13 +252,23 @@
                             <TreeView Grid.Row="1" ItemsSource="{Binding RootNodes, Mode=OneWay}"
                                       Background="#1E1E1E" BorderThickness="0"
                                       x:Name="ShmTree"
-                                      MouseRightButtonUp="TreeView_MouseRightButtonUp">
+                                      MouseRightButtonUp="TreeView_MouseRightButtonUp"
+                                      VirtualizingStackPanel.IsVirtualizing="True"
+                                      VirtualizingStackPanel.VirtualizationMode="Recycling"
+                                      VirtualizingStackPanel.ScrollUnit="Pixel">
+                                <TreeView.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <VirtualizingStackPanel/>
+                                    </ItemsPanelTemplate>
+                                </TreeView.ItemsPanel>
                                 <TreeView.Resources>
                                     <Style TargetType="TreeViewItem">
                                         <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
                                         <Setter Property="Background" Value="Transparent"/>
                                         <Setter Property="Foreground" Value="#D4D4D4"/>
                                         <Setter Property="Padding" Value="2,1"/>
+                                        <Setter Property="VirtualizingStackPanel.IsVirtualizing" Value="True"/>
+                                        <Setter Property="VirtualizingStackPanel.VirtualizationMode" Value="Recycling"/>
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
                                                 <Setter Property="Background" Value="#264F78"/>

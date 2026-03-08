@@ -25,9 +25,13 @@ public class DataMapper
 
         if (node.Children.Count == 0)
         {
-            // 리프 노드 — MemberInfo가 있으면 값 갱신
+            // 리프 노드 — MemberInfo가 있으면 값 갱신 (dirty-check)
             if (node.MemberInfo != null)
-                node.Value = ReadValue(data, node.MemberInfo, node.Offset);
+            {
+                var newVal = ReadValue(data, node.MemberInfo, node.Offset);
+                if (node.Value != newVal)
+                    node.Value = newVal;
+            }
         }
         else
         {

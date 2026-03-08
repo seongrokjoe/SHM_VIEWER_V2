@@ -11,6 +11,7 @@ public class ShmNotFoundException : Exception
 public class ShmReader
 {
     private const uint FILE_MAP_READ = 0x0004;
+    private byte[]? _buffer;
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
     private static extern IntPtr OpenFileMapping(uint dwDesiredAccess, bool bInheritHandle, string lpName);
@@ -38,9 +39,10 @@ public class ShmReader
             if (addr == IntPtr.Zero)
                 throw new InvalidOperationException($"MapViewOfFile 실패 (ErrorCode: {Marshal.GetLastWin32Error()})");
 
-            var buffer = new byte[size];
-            Marshal.Copy(addr, buffer, 0, size);
-            return buffer;
+            if (_buffer == null || _buffer.Length != size)
+                _buffer = new byte[size];
+            Marshal.Copy(addr, _buffer, 0, size);
+            return _buffer;
         }
         finally
         {

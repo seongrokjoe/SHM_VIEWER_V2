@@ -5,6 +5,7 @@ using ShmViewer.Core.Model;
 using ShmViewer.Core.Shm;
 using ShmViewer.Views.Dialogs;
 using System.Collections.ObjectModel;
+using System.Threading;
 using System.Timers;
 using System.Windows;
 
@@ -21,6 +22,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     private TypeDatabase? _db;
     private TypeInfo? _rootType;
     private DataMapper? _mapper;
+    private int _refreshing;
 
     [ObservableProperty] private string _tabTitle = "New SHM";
     [ObservableProperty] private string _shmName = string.Empty;
@@ -191,6 +193,10 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         // Only refresh if this is the active tab (or manual mode)
         if (!IsActiveTab && !IsManualMode) return;
 
+        // 중복 실행 방지
+        if (Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0)
+            return;
+
         try
         {
             var data = _reader.ReadSnapshot(ShmName, _rootType.TotalSize);
@@ -208,6 +214,10 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
             {
                 StatusText = $"⚠️ 갱신 실패: {ex.Message}";
             });
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _refreshing, 0);
         }
     }
 

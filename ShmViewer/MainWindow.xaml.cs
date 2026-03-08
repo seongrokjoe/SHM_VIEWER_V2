@@ -150,10 +150,10 @@ public partial class MainWindow : Window
             // 대상 노드 하이라이트
             result.Node.IsHighlighted = true;
 
-            // UI 업데이트 후 BringIntoView
+            // UI 업데이트 후 BringIntoView (가상화 대응: ancestorPath 전달)
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
             {
-                BringNodeIntoView(result.Node);
+                BringNodeIntoView(result.Node, result.AncestorPath);
             });
         });
     }
@@ -196,7 +196,7 @@ public partial class MainWindow : Window
         return current;
     }
 
-    private void BringNodeIntoView(TreeNodeViewModel node)
+    private void BringNodeIntoView(TreeNodeViewModel node, List<TreeNodeViewModel>? ancestorPath = null)
     {
         // Find the active tab's TreeView by navigating through TabControl
         var tabControl = FindVisualChild<TabControl>(this);
@@ -210,15 +210,75 @@ public partial class MainWindow : Window
         var treeView = FindVisualChild<TreeView>(tabItem);
         if (treeView == null) return;
 
-        var item = FindTreeViewItem(treeView, node);
-        if (item != null)
+        // 가상화 대응: 조상 경로를 따라 순차적으로 컨테이너를 실현시킨다
+        if (ancestorPath != null && ancestorPath.Count > 0)
         {
-            // Use Background priority to wait for expand animation to complete
-            Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+            var item = FindTreeViewItemWithVirtualization(treeView, node, ancestorPath);
+            if (item != null)
             {
-                item.BringIntoView();
-            });
+                Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+                {
+                    item.BringIntoView();
+                });
+            }
         }
+        else
+        {
+            var item = FindTreeViewItem(treeView, node);
+            if (item != null)
+            {
+                Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+                {
+                    item.BringIntoView();
+                });
+            }
+        }
+    }
+
+    /// <summary>
+    /// 가상화된 TreeView에서 조상 경로를 따라 컨테이너를 순차적으로 실현시키며 탐색한다.
+    /// </summary>
+    private TreeViewItem? FindTreeViewItemWithVirtualization(
+        ItemsControl parent, TreeNodeViewModel target, List<TreeNodeViewModel> ancestorPath)
+    {
+        foreach (var ancestor in ancestorPath)
+        {
+            parent.UpdateLayout();
+            var container = parent.ItemContainerGenerator.ContainerFromItem(ancestor) as TreeViewItem;
+            if (container == null)
+            {
+                // 가상화로 인해 컨테이너 없음 → VirtualizingPanel으로 강제 실현
+                var vsp = FindVisualChild<VirtualizingStackPanel>(parent);
+                if (vsp != null)
+                {
+                    int index = parent.Items.IndexOf(ancestor);
+                    if (index >= 0)
+                        vsp.BringIndexIntoViewPublic(index);
+                }
+                parent.UpdateLayout();
+                container = parent.ItemContainerGenerator.ContainerFromItem(ancestor) as TreeViewItem;
+            }
+            if (container == null) return null;
+            container.IsExpanded = true;
+            container.UpdateLayout();
+            parent = container;
+        }
+        // 마지막 타겟 아이템
+        parent.UpdateLayout();
+        var targetContainer = parent.ItemContainerGenerator.ContainerFromItem(target) as TreeViewItem;
+        if (targetContainer == null)
+        {
+            var vsp2 = FindVisualChild<VirtualizingStackPanel>(parent);
+            if (vsp2 != null)
+            {
+                int index = parent.Items.IndexOf(target);
+                if (index >= 0)
+                    vsp2.BringIndexIntoViewPublic(index);
+            }
+            parent.UpdateLayout();
+            targetContainer = parent.ItemContainerGenerator.ContainerFromItem(target) as TreeViewItem;
+        }
+        return targetContainer;
     }
 
     private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
@@ -248,15 +308,15 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private void TreeViewItem_Expanded(object sender, RoutedEventArgs e)
+    private async void TreeViewItem_Expanded(object sender, RoutedEventArgs e)
     {
         if (e.OriginalSource is not TreeViewItem item) return;
         if (item.DataContext is not TreeNodeViewModel node) return;
 
-        // Trigger lazy loading if this node is lazy
+        // Trigger async lazy loading if this node is lazy
         if (node.IsLazy)
         {
-            node.ExpandLoad();
+            await node.ExpandLoadAsync();
         }
     }
 
