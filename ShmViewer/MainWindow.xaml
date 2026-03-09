@@ -82,6 +82,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- ═══ Header File Panel ═══ -->
@@ -454,5 +455,23 @@
                 </DataGrid>
             </Grid>
         </Expander>
+
+        <Border Grid.Row="5" Background="#252526" BorderBrush="#444" BorderThickness="0,1,0,0" Padding="10,6">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0"
+                           Text="SHM_Viewer_v1.0_20260310 / 동작 전 struct 크기 확인 필수...!!"
+                           HorizontalAlignment="Left"
+                           Foreground="#DCDCAA"/>
+                <TextBlock Grid.Column="1"
+                           Text="Bug Report : sr.joe"
+                           HorizontalAlignment="Right"
+                           Foreground="#9CDCFE"/>
+            </Grid>
+        </Border>
     </Grid>
 </Window>
