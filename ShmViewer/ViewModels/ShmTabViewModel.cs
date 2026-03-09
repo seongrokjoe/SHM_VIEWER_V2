@@ -291,6 +291,9 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
         foreach (var member in type.Members)
         {
+            if (member.IsPaddingOnly)
+                continue;
+
             var fullPath = string.IsNullOrEmpty(path) ? member.Name : $"{path}.{member.Name}";
             var absOffset = baseOffset + member.Offset;
             var displayType = member.ArrayCount > 1

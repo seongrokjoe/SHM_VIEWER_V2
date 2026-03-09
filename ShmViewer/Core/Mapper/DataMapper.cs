@@ -67,6 +67,9 @@ public class DataMapper
     {
         foreach (var member in typeInfo.Members)
         {
+            if (member.IsPaddingOnly)
+                continue;
+
             TreeNodeViewModel child;
             if (member.ArrayDims.Length > 1)
                 child = BuildMultiDimArrayNode(data, member, baseOffset, 0, 0);
@@ -259,7 +262,7 @@ public class DataMapper
     {
         if (m.ArrayCount > 1) return $"{m.TypeName}[{m.ArrayCount}]";
         if (m.IsPointer) return $"{m.TypeName}*";
-        if (m.BitFieldWidth > 0) return $"{m.TypeName} : {m.BitFieldWidth}";
+        if (m.IsBitField) return $"{m.TypeName} : {m.BitFieldWidth}";
         return m.TypeName;
     }
 
@@ -271,7 +274,7 @@ public class DataMapper
         if (member.IsPointer)
             return ReadPointer(data, absOffset);
 
-        if (member.BitFieldWidth > 0)
+        if (member.IsBitField && member.BitFieldWidth > 0)
             return ReadBitField(data, member, absOffset).ToString();
 
         if (member.ResolvedEnum != null)
@@ -424,6 +427,9 @@ public class DataMapper
     {
         foreach (var member in typeInfo.Members)
         {
+            if (member.IsPaddingOnly)
+                continue;
+
             string path = string.IsNullOrEmpty(parentName)
                 ? member.Name
                 : $"{parentName}.{member.Name}";

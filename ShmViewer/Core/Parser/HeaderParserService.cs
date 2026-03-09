@@ -243,6 +243,7 @@ public class HeaderParserService
 
         // Bitfield
         var isBitField = clang.Cursor_isBitField(cursor) != 0;
+        member.IsBitField = isBitField;
         if (isBitField)
         {
             member.BitFieldWidth = clang.getFieldDeclBitWidth(cursor);
@@ -437,10 +438,9 @@ public class HeaderParserService
         return 0;
     }
 
-    // Post-processing: 파싱 완료 후 전방 참조 해소 + bottom-up TotalSize 재계산
+    // Post-processing: resolve references, then rebuild layout with the app's x64 rules.
     private static void PostProcessSizes(TypeDatabase db)
     {
-        // Step 1: 전방 참조 해소 (ResolvedType 설정만, Size 갱신은 Step 2에서)
         foreach (var typeInfo in db.Structs.Values)
         {
             foreach (var member in typeInfo.Members)
@@ -457,83 +457,7 @@ public class HeaderParserService
             }
         }
 
-        // Step 2: bottom-up TotalSize 재계산 (DFS post-order)
-        var processed = new HashSet<string>();
-        foreach (var name in db.Structs.Keys.ToList())
-            RecomputeTypeSize(name, db, processed);
-
-        // Step 3: Clang이 field offset 계산 실패한 struct 감지 후 재계산
-        // 비-union, 멤버 2개 이상, 첫 번째 이후 멤버들이 모두 Offset=0 & non-bitfield인 경우
-        foreach (var typeInfo in db.Structs.Values)
-        {
-            if (!typeInfo.IsUnion
-                && typeInfo.Members.Count > 1
-                && typeInfo.Members.Skip(1).All(m => m.Offset == 0 && m.BitFieldWidth == 0))
-            {
-                RecalcMemberOffsets(typeInfo);
-            }
-        }
-    }
-
-    private static void RecomputeTypeSize(string name, TypeDatabase db, HashSet<string> processed)
-    {
-        if (!processed.Add(name)) return; // 이미 처리됨 또는 순환 방지
-        if (!db.Structs.TryGetValue(name, out var typeInfo)) return;
-
-        // 의존 struct 먼저 처리 (post-order DFS)
-        foreach (var member in typeInfo.Members)
-        {
-            if (member.ResolvedType != null && !member.IsPointer)
-            {
-                RecomputeTypeSize(member.ResolvedType.Name, db, processed);
-                var expected = member.ResolvedType.TotalSize * member.ArrayCount;
-                if (expected > member.Size)
-                    member.Size = expected;
-            }
-        }
-
-        if (typeInfo.Members.Count == 0) return; // 빈 구조체는 Clang 값 유지
-
-        int computed = typeInfo.IsUnion
-            ? typeInfo.Members.Max(m => m.Size)
-            : typeInfo.Members.Max(m => m.Offset + m.Size);
-
-        if (computed > typeInfo.TotalSize)
-            typeInfo.TotalSize = computed;
-    }
-
-    // Clang field offset 실패 시 자연 정렬 기반 offset 재계산
-    private static void RecalcMemberOffsets(TypeInfo typeInfo)
-    {
-        int pos = 0;
-        int maxAlign = 1;
-        foreach (var m in typeInfo.Members)
-        {
-            int align = GetMemberAlignment(m);
-            maxAlign = Math.Max(maxAlign, align);
-            pos = ((pos + align - 1) / align) * align; // align up
-            m.Offset = pos;
-            pos += m.Size;
-        }
-        // trailing padding
-        int structSize = ((pos + maxAlign - 1) / maxAlign) * maxAlign;
-        if (structSize > typeInfo.TotalSize)
-            typeInfo.TotalSize = structSize;
-    }
-
-    private static int GetMemberAlignment(MemberInfo m)
-    {
-        if (m.IsPointer) return 8;
-        if (m.Primitive != PrimitiveKind.None)
-            return Math.Min(8, TypeDatabase.GetPrimitiveSize(m.Primitive));
-        if (m.ResolvedType != null)
-            return GetStructNaturalAlignment(m.ResolvedType);
-        return 1;
-    }
-
-    private static int GetStructNaturalAlignment(TypeInfo ti)
-    {
-        if (ti.Members.Count == 0) return 1;
-        return ti.Members.Max(m => GetMemberAlignment(m));
+        var layoutCalculator = new RecordLayoutCalculator(db);
+        layoutCalculator.Apply();
     }
 }
