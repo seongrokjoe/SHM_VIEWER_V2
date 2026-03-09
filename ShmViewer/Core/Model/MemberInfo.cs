@@ -11,6 +11,8 @@ public class MemberInfo
     public int Size { get; set; }
     public int ArrayCount { get; set; } = 1;
     public int[] ArrayDims { get; set; } = Array.Empty<int>(); // 다차원 배열 각 dimension (e.g. [2][3] → {2,3})
+    public string[] ArrayDimExpressions { get; set; } = Array.Empty<string>();
+    public string? UnresolvedArrayBoundExpression { get; set; }
     public bool IsPointer { get; set; }
     public bool IsBitField { get; set; }
     public int BitFieldWidth { get; set; }  // 0 = not a bitfield

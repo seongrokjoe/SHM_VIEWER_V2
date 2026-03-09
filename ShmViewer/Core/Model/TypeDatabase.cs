@@ -4,8 +4,10 @@ public class TypeDatabase
 {
     public Dictionary<string, TypeInfo> Structs { get; } = new();
     public Dictionary<string, EnumInfo> Enums { get; } = new();
+    public Dictionary<string, long> EnumConstants { get; } = new();
     public Dictionary<string, string> Typedefs { get; } = new();
     public Dictionary<string, long> Defines { get; } = new();
+    public Dictionary<string, string> DefineExpressions { get; } = new();
 
     public TypeInfo? ResolveType(string typeName)
     {
@@ -28,6 +30,41 @@ public class TypeDatabase
         while (Typedefs.TryGetValue(current, out var next) && visited.Add(current))
             current = next.Trim();
         return current;
+    }
+
+    public bool TryResolveConstant(string expression, out long value)
+        => ConstantExpressionEvaluator.TryEvaluate(expression, this, out value);
+
+    internal bool TryResolveConstantIdentifier(string identifier, HashSet<string> visited, out long value)
+    {
+        if (Defines.TryGetValue(identifier, out value))
+            return true;
+
+        if (EnumConstants.TryGetValue(identifier, out value))
+            return true;
+
+        if (!visited.Add(identifier))
+        {
+            value = 0;
+            return false;
+        }
+
+        try
+        {
+            if (DefineExpressions.TryGetValue(identifier, out var expression)
+                && ConstantExpressionEvaluator.TryEvaluate(expression, this, visited, out value))
+            {
+                Defines[identifier] = value;
+                return true;
+            }
+        }
+        finally
+        {
+            visited.Remove(identifier);
+        }
+
+        value = 0;
+        return false;
     }
 
     public static PrimitiveKind GetPrimitive(string typeName)

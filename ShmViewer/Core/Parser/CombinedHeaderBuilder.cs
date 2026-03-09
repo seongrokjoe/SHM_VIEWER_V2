@@ -54,11 +54,13 @@ public static class CombinedHeaderBuilder
 
     private sealed class StructBlock
     {
+        public string Kind        { get; init; } = "";
         public string PrimaryName { get; init; } = "";  // alias 또는 tag name
         public string TagName     { get; init; } = "";  // struct/union/enum 뒤의 이름
         public string Text        { get; init; } = "";  // 원본 소스 텍스트 (출력용)
         public string Body        { get; init; } = "";  // 중괄호 내부 텍스트, 코멘트 제거됨 (의존성 분석용)
         public readonly HashSet<string> Deps = new(StringComparer.Ordinal);
+        public readonly HashSet<string> ProvidedSymbols = new(StringComparer.Ordinal);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -69,9 +71,6 @@ public static class CombinedHeaderBuilder
     {
         // 코멘트를 공백으로 치환 (위치 유지) → 파싱/의존성 분석에 사용
         var stripped = StripComments(content);
-
-        // 모든 user-defined 타입 이름 수집
-        var allNames = CollectAllTypeNames(stripped);
 
         // 최상위 struct/union/enum 정의 블록 추출
         var blocks = new List<StructBlock>();
@@ -109,21 +108,6 @@ public static class CombinedHeaderBuilder
     // ──────────────────────────────────────────────────────────────
     // 타입 이름 수집
     // ──────────────────────────────────────────────────────────────
-
-    private static HashSet<string> CollectAllTypeNames(string stripped)
-    {
-        var names = new HashSet<string>(StringComparer.Ordinal);
-
-        // struct/union/enum Name { 패턴
-        foreach (Match m in Regex.Matches(stripped, @"\b(?:struct|union|enum)\s+(\w+)\s*\{"))
-            names.Add(m.Groups[1].Value);
-
-        // typedef ... } Alias; 패턴 (alias 이름)
-        foreach (Match m in Regex.Matches(stripped, @"\}\s*(\w+)\s*;"))
-            names.Add(m.Groups[1].Value);
-
-        return names;
-    }
 
     // ──────────────────────────────────────────────────────────────
     // 코멘트 제거 (위치 보존: 동일 길이 공백으로 치환)
@@ -283,11 +267,21 @@ public static class CombinedHeaderBuilder
 
         var block = new StructBlock
         {
+            Kind        = kw,
             PrimaryName = primaryName,
             TagName     = tagName,
             Text        = text,
             Body        = body
         };
+
+        block.ProvidedSymbols.Add(primaryName);
+        if (!string.IsNullOrEmpty(tagName))
+            block.ProvidedSymbols.Add(tagName);
+        if (kw == "enum")
+        {
+            foreach (var memberName in ExtractEnumMemberNames(body))
+                block.ProvidedSymbols.Add(memberName);
+        }
 
         return (block, i - start);
     }
@@ -298,20 +292,31 @@ public static class CombinedHeaderBuilder
 
     private static bool ReferencesBlock(string body, StructBlock other)
     {
-        if (!string.IsNullOrEmpty(other.PrimaryName) &&
-            ContainsWord(body, other.PrimaryName))
-            return true;
-
-        if (!string.IsNullOrEmpty(other.TagName) &&
-            other.TagName != other.PrimaryName &&
-            ContainsWord(body, other.TagName))
-            return true;
+        foreach (var symbol in other.ProvidedSymbols)
+        {
+            if (!string.IsNullOrEmpty(symbol) && ContainsWord(body, symbol))
+                return true;
+        }
 
         return false;
     }
 
     private static bool ContainsWord(string text, string word)
         => Regex.IsMatch(text, $@"\b{Regex.Escape(word)}\b");
+
+    private static IEnumerable<string> ExtractEnumMemberNames(string body)
+    {
+        foreach (var rawPart in body.Split(','))
+        {
+            var part = rawPart.Trim();
+            if (part.Length == 0)
+                continue;
+
+            var match = Regex.Match(part, @"^([A-Za-z_]\w*)\b");
+            if (match.Success)
+                yield return match.Groups[1].Value;
+        }
+    }
 
     // ──────────────────────────────────────────────────────────────
     // Topological Sort (Kahn's algorithm)

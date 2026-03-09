@@ -434,6 +434,12 @@ public class DataMapper
                 ? member.Name
                 : $"{parentName}.{member.Name}";
 
+            if (!string.IsNullOrEmpty(member.UnresolvedArrayBoundExpression))
+            {
+                unresolved.Add($"{path} -> unresolved array bound '{member.UnresolvedArrayBoundExpression}'");
+                continue;
+            }
+
             if (member.ResolvedType != null && !member.IsPointer)
             {
                 // TotalSize==0 && Members empty → Clang error-recovery stub → treat as unresolved

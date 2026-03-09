@@ -2,6 +2,7 @@ using ClangSharp.Interop;
 using ShmViewer.Core.Model;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace ShmViewer.Core.Parser;
 
@@ -25,6 +26,7 @@ public class HeaderParserService
         try
         {
             File.WriteAllText(tempFile, combinedContent);
+            CollectDefinesFromText(combinedContent, result.Database);
             ParseFile(tempFile, result);
         }
         finally
@@ -42,6 +44,7 @@ public class HeaderParserService
     private static unsafe void ParseFile(string filePath, ParseResult result)
     {
         var db = result.Database;
+        var sourceLines = File.ReadAllLines(filePath);
 
         var index = CXIndex.Create();
         try
@@ -65,8 +68,11 @@ public class HeaderParserService
             // Pass 1: collect typedefs
             CollectTypedefs(tu.Cursor, db, filePath);
 
-            // Pass 2: collect structs/enums
-            CollectDeclarations(tu.Cursor, db, result.UnresolvedTypes, filePath);
+            // Pass 2: collect enum values before struct fields are inspected.
+            CollectEnums(tu.Cursor, db, filePath);
+
+            // Pass 3: collect structs/unions with the constant table already populated.
+            CollectStructDeclarations(tu.Cursor, db, result.UnresolvedTypes, filePath, sourceLines);
 
             tu.Dispose();
         }
@@ -96,24 +102,19 @@ public class HeaderParserService
         }
     }
 
-    private static unsafe void CollectDeclarations(CXCursor root, TypeDatabase db,
-        List<string> unresolved, string filePath)
+    private static unsafe void CollectEnums(CXCursor root, TypeDatabase db, string filePath)
     {
-        var state = (db, unresolved, filePath);
+        var state = (db, filePath);
         var gcHandle = GCHandle.Alloc(state);
         try
         {
             root.VisitChildren(new CXCursorVisitor((cursor, parent, clientData) =>
             {
-                var s = (ValueTuple<TypeDatabase, List<string>, string>)GCHandle.FromIntPtr((IntPtr)clientData).Target!;
-                if (!IsFromFile(cursor, s.Item3)) return CXChildVisitResult.CXChildVisit_Continue;
+                var s = (ValueTuple<TypeDatabase, string>)GCHandle.FromIntPtr((IntPtr)clientData).Target!;
+                if (!IsFromFile(cursor, s.Item2)) return CXChildVisitResult.CXChildVisit_Continue;
 
                 switch (cursor.Kind)
                 {
-                    case CXCursorKind.CXCursor_StructDecl:
-                    case CXCursorKind.CXCursor_UnionDecl:
-                        CollectStruct(cursor, s.Item1, s.Item2);
-                        break;
                     case CXCursorKind.CXCursor_EnumDecl:
                         CollectEnum(cursor, s.Item1);
                         break;
@@ -121,6 +122,30 @@ public class HeaderParserService
                         CollectTypedef(cursor, s.Item1);
                         break;
                 }
+                return CXChildVisitResult.CXChildVisit_Continue;
+            }), new CXClientData(GCHandle.ToIntPtr(gcHandle)));
+        }
+        finally
+        {
+            gcHandle.Free();
+        }
+    }
+
+    private static unsafe void CollectStructDeclarations(CXCursor root, TypeDatabase db,
+        List<string> unresolved, string filePath, string[] sourceLines)
+    {
+        var state = (db, unresolved, filePath, sourceLines);
+        var gcHandle = GCHandle.Alloc(state);
+        try
+        {
+            root.VisitChildren(new CXCursorVisitor((cursor, parent, clientData) =>
+            {
+                var s = (ValueTuple<TypeDatabase, List<string>, string, string[]>)GCHandle.FromIntPtr((IntPtr)clientData).Target!;
+                if (!IsFromFile(cursor, s.Item3)) return CXChildVisitResult.CXChildVisit_Continue;
+
+                if (cursor.Kind is CXCursorKind.CXCursor_StructDecl or CXCursorKind.CXCursor_UnionDecl)
+                    CollectStruct(cursor, s.Item1, s.Item2, s.Item4);
+
                 return CXChildVisitResult.CXChildVisit_Continue;
             }), new CXClientData(GCHandle.ToIntPtr(gcHandle)));
         }
@@ -152,8 +177,7 @@ public class HeaderParserService
     private static void CollectEnum(CXCursor cursor, TypeDatabase db)
     {
         var name = cursor.Spelling.ToString();
-        if (string.IsNullOrEmpty(name)) return;
-        if (db.Enums.ContainsKey(name)) return;
+        if (!string.IsNullOrEmpty(name) && db.Enums.ContainsKey(name)) return;
 
         var enumInfo = new EnumInfo { Name = name };
 
@@ -170,6 +194,7 @@ public class HeaderParserService
                         var memberName = child.Spelling.ToString();
                         var value = clang.getEnumConstantDeclValue(child);
                         ei.Members[memberName] = value;
+                        db.EnumConstants[memberName] = value;
                     }
                     return CXChildVisitResult.CXChildVisit_Continue;
                 }), new CXClientData(GCHandle.ToIntPtr(gcHandle)));
@@ -180,45 +205,47 @@ public class HeaderParserService
             }
         }
 
-        db.Enums[name] = enumInfo;
+        if (!string.IsNullOrEmpty(name))
+            db.Enums[name] = enumInfo;
     }
 
-    private static void CollectStruct(CXCursor cursor, TypeDatabase db, List<string> unresolved)
+    private static void CollectStruct(CXCursor cursor, TypeDatabase db, List<string> unresolved, string[] sourceLines)
     {
         var name = cursor.Spelling.ToString();
         if (string.IsNullOrEmpty(name)) return;
         if (db.Structs.ContainsKey(name)) return;
 
         var sizeBytes = cursor.Type.SizeOf;
-        if (sizeBytes <= 0) return; // incomplete/forward declaration or error-recovery stub (size==0)
+        if (sizeBytes <= 0 && !HasFieldDeclarations(cursor))
+            return; // incomplete/forward declaration or error-recovery stub (size==0)
 
         var typeInfo = new TypeInfo
         {
             Name = name,
-            TotalSize = (int)sizeBytes,
+            TotalSize = sizeBytes > 0 ? (int)sizeBytes : 0,
             IsUnion = cursor.Kind == CXCursorKind.CXCursor_UnionDecl
         };
 
         unsafe
         {
-            var state = (typeInfo, db, unresolved, name);
+            var state = (typeInfo, db, unresolved, name, sourceLines);
             var gcHandle = GCHandle.Alloc(state);
             try
             {
                 cursor.VisitChildren(new CXCursorVisitor((child, parent, clientData) =>
                 {
-                    var s = (ValueTuple<TypeInfo, TypeDatabase, List<string>, string>)
+                    var s = (ValueTuple<TypeInfo, TypeDatabase, List<string>, string, string[]>)
                         GCHandle.FromIntPtr((IntPtr)clientData).Target!;
 
                     if (child.Kind == CXCursorKind.CXCursor_FieldDecl)
                     {
-                        var member = BuildMember(child, s.Item2, s.Item3, s.Item4);
+                        var member = BuildMember(child, s.Item2, s.Item3, s.Item4, s.Item5);
                         if (member != null)
                             s.Item1.Members.Add(member);
                     }
                     else if (child.Kind is CXCursorKind.CXCursor_StructDecl or CXCursorKind.CXCursor_UnionDecl)
                     {
-                        CollectStruct(child, s.Item2, s.Item3);
+                        CollectStruct(child, s.Item2, s.Item3, s.Item5);
                     }
                     return CXChildVisitResult.CXChildVisit_Continue;
                 }), new CXClientData(GCHandle.ToIntPtr(gcHandle)));
@@ -232,14 +259,57 @@ public class HeaderParserService
         db.Structs[name] = typeInfo;
     }
 
+    private static bool HasFieldDeclarations(CXCursor cursor)
+    {
+        bool hasFields = false;
+        unsafe
+        {
+            cursor.VisitChildren(new CXCursorVisitor((child, _, _) =>
+            {
+                if (child.Kind == CXCursorKind.CXCursor_FieldDecl)
+                {
+                    hasFields = true;
+                    return CXChildVisitResult.CXChildVisit_Break;
+                }
+
+                return CXChildVisitResult.CXChildVisit_Continue;
+            }), new CXClientData(IntPtr.Zero));
+        }
+
+        return hasFields;
+    }
+
+    private static string ExtractFieldSourceText(CXCursor cursor, string[] sourceLines)
+    {
+        var extent = cursor.Extent;
+        extent.Start.GetFileLocation(out _, out uint startLine, out _, out _);
+        extent.End.GetFileLocation(out _, out uint endLine, out _, out _);
+
+        if (startLine == 0 || endLine == 0 || startLine > sourceLines.Length || endLine > sourceLines.Length)
+            return string.Empty;
+
+        var parts = new List<string>();
+        for (int lineIndex = (int)startLine - 1; lineIndex <= (int)endLine - 1; lineIndex++)
+            parts.Add(sourceLines[lineIndex]);
+
+        return string.Join("\n", parts);
+    }
+
     private static unsafe MemberInfo? BuildMember(CXCursor cursor, TypeDatabase db,
-        List<string> unresolved, string parentName)
+        List<string> unresolved, string parentName, string[] sourceLines)
     {
         var memberName = cursor.Spelling.ToString();
         var memberType = cursor.Type;
         var canonical = memberType.CanonicalType;
+        var typeSpelling = memberType.Spelling.ToString();
+        var displayName = cursor.DisplayName.ToString();
 
         var member = new MemberInfo { Name = memberName };
+        member.ArrayDimExpressions = ExtractArrayDimensionExpressions(typeSpelling);
+        if (member.ArrayDimExpressions.Length == 0)
+            member.ArrayDimExpressions = ExtractArrayDimensionExpressions(displayName);
+        if (member.ArrayDimExpressions.Length == 0)
+            member.ArrayDimExpressions = ExtractArrayDimensionExpressions(ExtractFieldSourceText(cursor, sourceLines));
 
         // Bitfield
         var isBitField = clang.Cursor_isBitField(cursor) != 0;
@@ -268,7 +338,7 @@ public class HeaderParserService
         {
             member.IsPointer = true;
             member.Primitive = PrimitiveKind.Pointer;
-            member.TypeName = GetCleanTypeName(memberType.Spelling.ToString());
+            member.TypeName = GetCleanTypeName(typeSpelling);
             member.Size = 8;
             return member;
         }
@@ -294,11 +364,6 @@ public class HeaderParserService
             else if (elemCanonical.kind == CXTypeKind.CXType_VariableArray
                   || elemCanonical.kind == CXTypeKind.CXType_DependentSizedArray)
             {
-                // enum 상수 등 VLA: spelling에서 크기 해소 시도
-                var dim = TryResolveVlaDim(elemCanonical, db);
-                if (dim <= 0) break;
-                dims.Add(dim);
-                // [FIX] 동일한 fallback 처리
                 var canonElem = elemCanonical.ArrayElementType;
                 elemType = (elemType.kind == CXTypeKind.CXType_VariableArray
                          || elemType.kind == CXTypeKind.CXType_DependentSizedArray)
@@ -312,10 +377,22 @@ public class HeaderParserService
             }
         }
 
+        if (member.ArrayDimExpressions.Length > dims.Count)
+        {
+            if (TryResolveArrayDimensions(member.ArrayDimExpressions.Skip(dims.Count), db, out var resolvedDims, out var unresolvedExpression))
+                dims.AddRange(resolvedDims);
+            else if (!string.IsNullOrEmpty(unresolvedExpression))
+            {
+                member.UnresolvedArrayBoundExpression = unresolvedExpression;
+                unresolved.Add(FormatArrayBoundFailure(parentName, memberName, unresolvedExpression));
+            }
+        }
+
         member.ArrayDims = dims.ToArray();
         member.ArrayCount = dims.Count > 0 ? dims.Aggregate(1, (a, b) => a * b) : 1;
 
         ResolveElementType(member, elemType, db, unresolved, parentName);
+        UpdateResolvedArraySize(member);
         return member;
     }
 
@@ -327,7 +404,7 @@ public class HeaderParserService
         var resolvedAlias = db.ResolveTypeAlias(spelling);
 
         // Enum?
-        if (db.Enums.TryGetValue(resolvedAlias, out var enumInfo))
+        if (db.ResolveEnum(spelling) is { } enumInfo)
         {
             member.TypeName = spelling;
             member.ResolvedEnum = enumInfo;
@@ -413,29 +490,110 @@ public class HeaderParserService
         _ => PrimitiveKind.None
     };
 
-    // VLA/DependentSized 배열의 크기 표현식에서 enum 상수 또는 매크로 값 해소
-    private static int TryResolveVlaDim(CXType vla, TypeDatabase db)
+    private static string[] ExtractArrayDimensionExpressions(string typeSpelling)
     {
-        // Clang VLA의 크기 표현식 spelling 시도
-        // 직접 접근이 제한되므로 spelling에서 추정
-        var spelling = vla.Spelling.ToString().Trim();
+        return Regex.Matches(typeSpelling, @"\[(?<expr>[^\[\]]+)\]")
+            .Cast<Match>()
+            .Select(m => m.Groups["expr"].Value.Trim())
+            .Where(expr => expr.Length > 0)
+            .ToArray();
+    }
 
-        // 이미 숫자인 경우
-        if (int.TryParse(spelling, out var n) && n > 0)
-            return n;
+    private static bool TryResolveArrayDimensions(IEnumerable<string> expressions, TypeDatabase db, out List<int> dims, out string unresolvedExpression)
+    {
+        dims = new List<int>();
+        unresolvedExpression = string.Empty;
 
-        // enum 멤버에서 검색
-        foreach (var enumInfo in db.Enums.Values)
+        foreach (var expression in expressions)
         {
-            if (enumInfo.Members.TryGetValue(spelling, out var val) && val > 0)
-                return (int)val;
+            if (!db.TryResolveConstant(expression, out var value) || value <= 0 || value > int.MaxValue)
+            {
+                unresolvedExpression = expression;
+                return false;
+            }
+
+            dims.Add((int)value);
         }
 
-        // Defines(매크로)에서 검색
-        if (db.Defines.TryGetValue(spelling, out var def) && def > 0)
-            return (int)def;
+        return true;
+    }
 
-        return 0;
+    private static void UpdateResolvedArraySize(MemberInfo member)
+    {
+        if (member.ArrayDims.Length == 0)
+            return;
+
+        int elementSize = GetMemberElementSize(member);
+        if (elementSize > 0)
+            member.Size = elementSize * member.ArrayCount;
+    }
+
+    private static int GetMemberElementSize(MemberInfo member)
+    {
+        if (member.IsPointer)
+            return 8;
+
+        if (member.ResolvedType != null)
+            return member.ResolvedType.TotalSize;
+
+        if (member.ResolvedEnum != null)
+            return 4;
+
+        if (member.Primitive != PrimitiveKind.None)
+            return TypeDatabase.GetPrimitiveSize(member.Primitive);
+
+        return member.ArrayCount > 0 && member.Size > 0 ? member.Size / member.ArrayCount : member.Size;
+    }
+
+    private static string FormatArrayBoundFailure(string parentName, string memberName, string expression)
+    {
+        var memberPath = string.IsNullOrEmpty(parentName)
+            ? memberName
+            : $"{parentName}.{memberName}";
+        return $"{memberPath} -> unresolved array bound '{expression}'";
+    }
+
+    private static void CollectDefinesFromText(string content, TypeDatabase db)
+    {
+        foreach (var define in ExtractDefines(content))
+        {
+            db.DefineExpressions[define.Key] = define.Value;
+            if (db.TryResolveConstant(define.Value, out var value))
+                db.Defines[define.Key] = value;
+        }
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> ExtractDefines(string content)
+    {
+        var stripped = Regex.Replace(content, @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+        var lines = stripped.Replace("\r", string.Empty).Split('\n');
+        var current = new List<string>();
+
+        foreach (var rawLine in lines)
+        {
+            var line = Regex.Replace(rawLine, @"//.*$", string.Empty).TrimEnd();
+            if (line.Length == 0)
+                continue;
+
+            if (line.EndsWith("\\", StringComparison.Ordinal))
+            {
+                current.Add(line[..^1].TrimEnd());
+                continue;
+            }
+
+            current.Add(line);
+            var merged = string.Join(" ", current).Trim();
+            current.Clear();
+
+            var match = Regex.Match(merged, @"^\s*#define\s+([A-Za-z_]\w*)(?!\s*\()(?<expr>\s+.+)$");
+            if (!match.Success)
+                continue;
+
+            var name = match.Groups[1].Value;
+            var expr = match.Groups["expr"].Value.Trim();
+            if (expr.Length > 0)
+                yield return new KeyValuePair<string, string>(name, expr);
+        }
     }
 
     // Post-processing: resolve references, then rebuild layout with the app's x64 rules.
