@@ -294,13 +294,14 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
             if (member.IsPaddingOnly)
                 continue;
 
-            var fullPath = string.IsNullOrEmpty(path) ? member.Name : $"{path}.{member.Name}";
+            var displayName = member.EffectiveName;
+            var fullPath = string.IsNullOrEmpty(path) ? displayName : $"{path}.{displayName}";
             var absOffset = baseOffset + member.Offset;
             var displayType = member.ArrayCount > 1
                 ? $"{member.TypeName}[{member.ArrayCount}]"
                 : member.TypeName;
 
-            SearchIndex.Add(new SearchEntry(member.Name, displayType, absOffset, member.Size, fullPath));
+            SearchIndex.Add(new SearchEntry(displayName, displayType, absOffset, member.Size, fullPath));
 
             if (member.ResolvedType != null && !member.IsPointer)
             {

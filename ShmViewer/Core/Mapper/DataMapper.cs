@@ -94,7 +94,7 @@ public class DataMapper
         var dimSuffix = string.Concat(member.ArrayDims.Select(d => $"[{d}]"));
         var node = new TreeNodeViewModel
         {
-            Name = dimIdx == 0 ? member.Name : $"[{flatBase}]",
+            Name = dimIdx == 0 ? member.EffectiveName : $"[{flatBase}]",
             TypeName = $"{member.TypeName}{dimSuffix}",
             Offset = baseOffset + member.Offset + flatBase * elemSize,
             Size = member.ArrayDims.Skip(dimIdx).Aggregate(1, (a, b) => a * b) * elemSize,
@@ -154,7 +154,7 @@ public class DataMapper
 
         var node = new TreeNodeViewModel
         {
-            Name = member.Name,
+            Name = member.EffectiveName,
             TypeName = $"{member.TypeName}[{member.ArrayCount}]",
             Offset = baseOffset + member.Offset,
             Size = member.Size,
@@ -224,7 +224,7 @@ public class DataMapper
         var absOffset = baseOffset + member.Offset;
         var node = new TreeNodeViewModel
         {
-            Name = member.Name,
+            Name = member.EffectiveName,
             TypeName = FormatTypeName(member),
             Offset = absOffset,
             Size = member.Size,
@@ -431,8 +431,8 @@ public class DataMapper
                 continue;
 
             string path = string.IsNullOrEmpty(parentName)
-                ? member.Name
-                : $"{parentName}.{member.Name}";
+                ? member.EffectiveName
+                : $"{parentName}.{member.EffectiveName}";
 
             if (!string.IsNullOrEmpty(member.UnresolvedArrayBoundExpression))
             {

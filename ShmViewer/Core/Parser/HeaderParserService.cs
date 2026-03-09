@@ -210,9 +210,15 @@ public class HeaderParserService
             db.Enums[name] = enumInfo;
     }
 
-    private static void CollectStruct(CXCursor cursor, TypeDatabase db, List<string> unresolved, string[] sourceLines)
+    private static void CollectStruct(
+        CXCursor cursor,
+        TypeDatabase db,
+        List<string> unresolved,
+        string[] sourceLines,
+        string? forcedName = null,
+        bool isAnonymousRecord = false)
     {
-        var name = cursor.Spelling.ToString();
+        var name = forcedName ?? cursor.Spelling.ToString();
         if (string.IsNullOrEmpty(name)) return;
         if (db.Structs.ContainsKey(name)) return;
 
@@ -224,30 +230,30 @@ public class HeaderParserService
         {
             Name = name,
             TotalSize = sizeBytes > 0 ? (int)sizeBytes : 0,
-            IsUnion = cursor.Kind == CXCursorKind.CXCursor_UnionDecl
+            IsUnion = cursor.Kind == CXCursorKind.CXCursor_UnionDecl,
+            IsAnonymousRecord = isAnonymousRecord
         };
+
+        var children = new List<CXCursor>();
 
         unsafe
         {
-            var state = (typeInfo, db, unresolved, name, sourceLines);
+            var state = (children, db, unresolved, sourceLines);
             var gcHandle = GCHandle.Alloc(state);
             try
             {
                 cursor.VisitChildren(new CXCursorVisitor((child, parent, clientData) =>
                 {
-                    var s = (ValueTuple<TypeInfo, TypeDatabase, List<string>, string, string[]>)
+                    var s = (ValueTuple<List<CXCursor>, TypeDatabase, List<string>, string[]>)
                         GCHandle.FromIntPtr((IntPtr)clientData).Target!;
 
-                    if (child.Kind == CXCursorKind.CXCursor_FieldDecl)
+                    s.Item1.Add(child);
+
+                    if (IsNamedRecordDeclaration(child))
                     {
-                        var member = BuildMember(child, s.Item2, s.Item3, s.Item4, s.Item5);
-                        if (member != null)
-                            s.Item1.Members.Add(member);
+                        CollectStruct(child, s.Item2, s.Item3, s.Item4);
                     }
-                    else if (child.Kind is CXCursorKind.CXCursor_StructDecl or CXCursorKind.CXCursor_UnionDecl)
-                    {
-                        CollectStruct(child, s.Item2, s.Item3, s.Item5);
-                    }
+
                     return CXChildVisitResult.CXChildVisit_Continue;
                 }), new CXClientData(GCHandle.ToIntPtr(gcHandle)));
             }
@@ -255,6 +261,59 @@ public class HeaderParserService
             {
                 gcHandle.Free();
             }
+        }
+
+        int anonymousOrdinal = 0;
+        var processedAnonymousRecords = new HashSet<string>(StringComparer.Ordinal);
+
+        for (int index = 0; index < children.Count; index++)
+        {
+            var child = children[index];
+
+            if (child.Kind == CXCursorKind.CXCursor_FieldDecl)
+            {
+                if (IsAnonymousCarrierField(child))
+                {
+                    var anonymousMember = TryBuildAnonymousMemberFromCarrierField(
+                        child,
+                        db,
+                        unresolved,
+                        sourceLines,
+                        name,
+                        ref anonymousOrdinal);
+
+                    if (anonymousMember is { } resolvedAnonymousMember)
+                    {
+                        typeInfo.Members.Add(resolvedAnonymousMember.Member);
+                        processedAnonymousRecords.Add(resolvedAnonymousMember.RecordKey);
+                        continue;
+                    }
+                }
+
+                var member = BuildMember(child, db, unresolved, name, sourceLines);
+                if (member != null)
+                    typeInfo.Members.Add(member);
+                continue;
+            }
+
+            if (child.Kind is not CXCursorKind.CXCursor_StructDecl and not CXCursorKind.CXCursor_UnionDecl)
+                continue;
+
+            if (!IsAnonymousRecordDeclaration(child))
+                continue;
+
+            var recordKey = GetCursorKey(child);
+            if (processedAnonymousRecords.Contains(recordKey))
+                continue;
+
+            var syntheticTypeName = CreateAnonymousTypeName(name, child.Kind, anonymousOrdinal);
+            CollectStruct(child, db, unresolved, sourceLines, syntheticTypeName, isAnonymousRecord: true);
+            if (!db.Structs.TryGetValue(syntheticTypeName, out var anonymousType))
+                continue;
+
+            typeInfo.Members.Add(BuildAnonymousMember(name, child.Kind, anonymousOrdinal, anonymousType, child.Type.SizeOf));
+            processedAnonymousRecords.Add(recordKey);
+            anonymousOrdinal++;
         }
 
         db.Structs[name] = typeInfo;
@@ -267,7 +326,8 @@ public class HeaderParserService
         {
             cursor.VisitChildren(new CXCursorVisitor((child, _, _) =>
             {
-                if (child.Kind == CXCursorKind.CXCursor_FieldDecl)
+                if (child.Kind == CXCursorKind.CXCursor_FieldDecl
+                    || IsAnonymousRecordDeclaration(child))
                 {
                     hasFields = true;
                     return CXChildVisitResult.CXChildVisit_Break;
@@ -278,6 +338,134 @@ public class HeaderParserService
         }
 
         return hasFields;
+    }
+
+    private static bool IsNamedRecordDeclaration(CXCursor cursor)
+    {
+        if (cursor.Kind is not CXCursorKind.CXCursor_StructDecl and not CXCursorKind.CXCursor_UnionDecl)
+            return false;
+
+        return !IsAnonymousRecordSpelling(cursor.Spelling.ToString());
+    }
+
+    private static bool IsAnonymousRecordDeclaration(CXCursor cursor)
+    {
+        if (cursor.Kind is not CXCursorKind.CXCursor_StructDecl and not CXCursorKind.CXCursor_UnionDecl)
+            return false;
+
+        return IsAnonymousRecordSpelling(cursor.Spelling.ToString()) && HasFieldDeclarations(cursor);
+    }
+
+    private static bool IsAnonymousCarrierField(CXCursor cursor)
+    {
+        if (cursor.Kind != CXCursorKind.CXCursor_FieldDecl)
+            return false;
+
+        if (!string.IsNullOrEmpty(cursor.Spelling.ToString()))
+            return false;
+
+        return cursor.Type.CanonicalType.kind == CXTypeKind.CXType_Record;
+    }
+
+    private static (MemberInfo Member, string RecordKey)? TryBuildAnonymousMemberFromCarrierField(
+        CXCursor fieldCursor,
+        TypeDatabase db,
+        List<string> unresolved,
+        string[] sourceLines,
+        string parentName,
+        ref int anonymousOrdinal)
+    {
+        var recordCursor = FindAnonymousRecordCursor(fieldCursor);
+        if (recordCursor == null)
+            return null;
+
+        var syntheticTypeName = CreateAnonymousTypeName(parentName, recordCursor.Value.Kind, anonymousOrdinal);
+        CollectStruct(recordCursor.Value, db, unresolved, sourceLines, syntheticTypeName, isAnonymousRecord: true);
+        if (!db.Structs.TryGetValue(syntheticTypeName, out var anonymousType))
+            return null;
+
+        var member = BuildAnonymousMember(
+            parentName,
+            recordCursor.Value.Kind,
+            anonymousOrdinal,
+            anonymousType,
+            fieldCursor.Type.SizeOf);
+
+        var bitOffset = clang.Cursor_getOffsetOfField(fieldCursor);
+        if (bitOffset >= 0)
+            member.Offset = (int)(bitOffset / 8);
+
+        anonymousOrdinal++;
+        return (member, GetCursorKey(recordCursor.Value));
+    }
+
+    private static CXCursor? FindAnonymousRecordCursor(CXCursor fieldCursor)
+    {
+        CXCursor? recordCursor = null;
+
+        unsafe
+        {
+            fieldCursor.VisitChildren(new CXCursorVisitor((child, _, _) =>
+            {
+                if (child.Kind is CXCursorKind.CXCursor_StructDecl or CXCursorKind.CXCursor_UnionDecl)
+                {
+                    recordCursor = child;
+                    return CXChildVisitResult.CXChildVisit_Break;
+                }
+
+                return CXChildVisitResult.CXChildVisit_Continue;
+            }), new CXClientData(IntPtr.Zero));
+        }
+
+        return recordCursor;
+    }
+
+    private static MemberInfo BuildAnonymousMember(
+        string parentName,
+        CXCursorKind recordKind,
+        int ordinal,
+        TypeInfo anonymousType,
+        long sizeBytes)
+    {
+        var displayName = GetAnonymousDisplayName(recordKind);
+
+        return new MemberInfo
+        {
+            Name = CreateAnonymousMemberName(parentName, recordKind, ordinal),
+            DisplayName = displayName,
+            TypeName = displayName,
+            ResolvedType = anonymousType,
+            Size = sizeBytes > 0 ? (int)sizeBytes : anonymousType.TotalSize,
+            IsAnonymousRecord = true
+        };
+    }
+
+    private static string CreateAnonymousTypeName(string parentName, CXCursorKind recordKind, int ordinal)
+        => $"__anon_{GetAnonymousKindName(recordKind)}_{parentName}_{ordinal}";
+
+    private static string CreateAnonymousMemberName(string parentName, CXCursorKind recordKind, int ordinal)
+        => $"__anon_member_{GetAnonymousKindName(recordKind)}_{parentName}_{ordinal}";
+
+    private static string GetAnonymousDisplayName(CXCursorKind recordKind)
+        => recordKind == CXCursorKind.CXCursor_UnionDecl ? "(anonymous union)" : "(anonymous struct)";
+
+    private static string GetAnonymousKindName(CXCursorKind recordKind)
+        => recordKind == CXCursorKind.CXCursor_UnionDecl ? "union" : "struct";
+
+    private static string GetCursorKey(CXCursor cursor)
+    {
+        var extent = cursor.Extent;
+        extent.Start.GetFileLocation(out _, out uint startLine, out uint startColumn, out _);
+        extent.End.GetFileLocation(out _, out uint endLine, out uint endColumn, out _);
+        return $"{(int)cursor.Kind}:{startLine}:{startColumn}:{endLine}:{endColumn}";
+    }
+
+    private static bool IsAnonymousRecordSpelling(string spelling)
+    {
+        if (string.IsNullOrWhiteSpace(spelling))
+            return true;
+
+        return spelling.StartsWith("(anonymous ", StringComparison.Ordinal);
     }
 
     private static string ExtractFieldSourceText(CXCursor cursor, string[] sourceLines)

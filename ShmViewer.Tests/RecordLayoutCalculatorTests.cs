@@ -1,4 +1,6 @@
 using System.IO;
+using System.Text;
+using ShmViewer.Core.Mapper;
 using ShmViewer.Core.Model;
 using ShmViewer.Core.Parser;
 using Xunit;
@@ -116,6 +118,111 @@ public sealed class RecordLayoutCalculatorTests
         Assert.Equal(32, packet.TotalSize);
     }
 
+    [Fact]
+    public void AnonymousUnionAndStruct_AreIncludedInOuterLayout()
+    {
+        const string header = """
+            typedef struct stTempA {
+                int valueA;
+            } stTempA;
+
+            typedef struct stTempB {
+                int valueB;
+            } stTempB;
+
+            typedef struct stABC {
+                long lA;
+                long lB;
+                long lC;
+                union {
+                    struct {
+                        long llA;
+                        long llB;
+                        long llC;
+                        stTempA tempA;
+                        stTempB tempB;
+                    };
+                };
+            } stABC;
+            """;
+
+        var result = ParseHeader(header);
+        var outer = AssertType(result.Database, "stABC");
+
+        Assert.True(outer.TotalSize == 32, DumpTypeLayout(outer));
+        AssertMember(outer, "lA", 0, 4);
+        AssertMember(outer, "lB", 4, 4);
+        AssertMember(outer, "lC", 8, 4);
+
+        var anonymousUnion = Assert.Single(outer.Members, m => m.IsAnonymousRecord && m.DisplayName == "(anonymous union)");
+        Assert.Equal(12, anonymousUnion.Offset);
+        Assert.Equal(20, anonymousUnion.Size);
+        Assert.NotNull(anonymousUnion.ResolvedType);
+        Assert.True(anonymousUnion.ResolvedType!.IsUnion);
+        Assert.True(anonymousUnion.ResolvedType.IsAnonymousRecord);
+
+        var anonymousStruct = Assert.Single(
+            anonymousUnion.ResolvedType.Members,
+            m => m.IsAnonymousRecord && m.DisplayName == "(anonymous struct)");
+        Assert.Equal(0, anonymousStruct.Offset);
+        Assert.Equal(20, anonymousStruct.Size);
+        Assert.NotNull(anonymousStruct.ResolvedType);
+        Assert.False(anonymousStruct.ResolvedType!.IsUnion);
+        Assert.True(anonymousStruct.ResolvedType.IsAnonymousRecord);
+
+        var inner = anonymousStruct.ResolvedType;
+        Assert.Equal(20, inner.TotalSize);
+        AssertMember(inner, "llA", 0, 4);
+        AssertMember(inner, "llB", 4, 4);
+        AssertMember(inner, "llC", 8, 4);
+        AssertMember(inner, "tempA", 12, 4);
+        AssertMember(inner, "tempB", 16, 4);
+    }
+
+    [Fact]
+    public void DataMapper_MapsAnonymousRecordsAsVisibleNodes()
+    {
+        const string header = """
+            typedef struct stTempA {
+                int valueA;
+            } stTempA;
+
+            typedef struct stTempB {
+                int valueB;
+            } stTempB;
+
+            typedef struct stABC {
+                long lA;
+                long lB;
+                long lC;
+                union {
+                    struct {
+                        long llA;
+                        long llB;
+                        long llC;
+                        stTempA tempA;
+                        stTempB tempB;
+                    };
+                };
+            } stABC;
+            """;
+
+        var result = ParseHeader(header);
+        var outer = AssertType(result.Database, "stABC");
+        var mapper = new DataMapper(result.Database);
+
+        var root = mapper.MapEmpty(outer);
+        var anonymousUnionNode = Assert.Single(root.Children, child => child.Name == "(anonymous union)");
+        anonymousUnionNode.ExpandLoad();
+
+        var anonymousStructNode = Assert.Single(anonymousUnionNode.Children, child => child.Name == "(anonymous struct)");
+        anonymousStructNode.ExpandLoad();
+
+        Assert.Equal(
+            new[] { "llA", "llB", "llC", "tempA", "tempB" },
+            anonymousStructNode.Children.Select(child => child.Name).ToArray());
+    }
+
     private static ParseResult ParseHeader(string headerContent)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "ShmViewer.Tests", Guid.NewGuid().ToString("N"));
@@ -155,5 +262,27 @@ public sealed class RecordLayoutCalculatorTests
         Assert.Equal(size, member.Size);
         Assert.Equal(bitOffset, member.BitFieldOffset);
         Assert.Equal(width, member.BitFieldWidth);
+    }
+
+    private static string DumpTypeLayout(TypeInfo typeInfo)
+    {
+        var builder = new StringBuilder();
+        DumpTypeLayout(typeInfo, builder, 0);
+        return builder.ToString();
+    }
+
+    private static void DumpTypeLayout(TypeInfo typeInfo, StringBuilder builder, int depth)
+    {
+        var indent = new string(' ', depth * 2);
+        builder.AppendLine($"{indent}Type {typeInfo.Name} size={typeInfo.TotalSize} align={typeInfo.Alignment} union={typeInfo.IsUnion} anonymous={typeInfo.IsAnonymousRecord}");
+
+        foreach (var member in typeInfo.Members)
+        {
+            builder.AppendLine(
+                $"{indent}  Member name='{member.Name}' display='{member.DisplayName}' type='{member.TypeName}' offset={member.Offset} size={member.Size} anonymous={member.IsAnonymousRecord}");
+
+            if (member.ResolvedType != null)
+                DumpTypeLayout(member.ResolvedType, builder, depth + 1);
+        }
     }
 }

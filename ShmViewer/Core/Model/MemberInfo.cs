@@ -3,6 +3,7 @@ namespace ShmViewer.Core.Model;
 public class MemberInfo
 {
     public string Name { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
     public string TypeName { get; set; } = string.Empty;
     public TypeInfo? ResolvedType { get; set; }
     public EnumInfo? ResolvedEnum { get; set; }
@@ -17,8 +18,10 @@ public class MemberInfo
     public bool IsBitField { get; set; }
     public int BitFieldWidth { get; set; }  // 0 = not a bitfield
     public int BitFieldOffset { get; set; } // bit offset within storage unit
+    public bool IsAnonymousRecord { get; set; }
     public bool IsSpare => IsSpareByName(Name);
     public bool IsPaddingOnly => IsBitField && string.IsNullOrEmpty(Name);
+    public string EffectiveName => string.IsNullOrEmpty(DisplayName) ? Name : DisplayName;
 
     private static bool IsSpareByName(string name)
     {
