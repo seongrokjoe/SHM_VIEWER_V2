@@ -30,8 +30,10 @@
           Condition="Exists('$(OutputPath)runtimes\win-x64\native\')" />
   </Target>
 
-  <!-- Copy native DLLs to publish output root -->
-  <Target Name="CopyNativeDllsAfterPublish" AfterTargets="Publish">
+  <!-- Keep publish output single-file when native libraries are bundled. -->
+  <Target Name="CopyNativeDllsAfterPublish"
+          AfterTargets="Publish"
+          Condition="'$(PublishSingleFile)' != 'true' or '$(IncludeNativeLibrariesForSelfExtract)' != 'true'">
     <ItemGroup>
       <_PublishNativeDlls Include="$(PublishDir)runtimes\win-x64\native\*.dll" />
     </ItemGroup>
