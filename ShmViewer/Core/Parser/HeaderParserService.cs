@@ -2,6 +2,7 @@ using ClangSharp.Interop;
 using ShmViewer.Core.Model;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace ShmViewer.Core.Parser;
@@ -292,7 +293,7 @@ public class HeaderParserService
         for (int lineIndex = (int)startLine - 1; lineIndex <= (int)endLine - 1; lineIndex++)
             parts.Add(sourceLines[lineIndex]);
 
-        return string.Join("\n", parts);
+        return NormalizeDeclarationText(string.Join("\n", parts));
     }
 
     private static unsafe MemberInfo? BuildMember(CXCursor cursor, TypeDatabase db,
@@ -492,7 +493,8 @@ public class HeaderParserService
 
     private static string[] ExtractArrayDimensionExpressions(string typeSpelling)
     {
-        return Regex.Matches(typeSpelling, @"\[(?<expr>[^\[\]]+)\]")
+        var declaration = NormalizeDeclarationText(typeSpelling);
+        return Regex.Matches(declaration, @"\[(?<expr>[^\[\]]+)\]")
             .Cast<Match>()
             .Select(m => m.Groups["expr"].Value.Trim())
             .Where(expr => expr.Length > 0)
@@ -565,13 +567,13 @@ public class HeaderParserService
 
     private static IEnumerable<KeyValuePair<string, string>> ExtractDefines(string content)
     {
-        var stripped = Regex.Replace(content, @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+        var stripped = StripCommentsPreservingLiterals(content);
         var lines = stripped.Replace("\r", string.Empty).Split('\n');
         var current = new List<string>();
 
         foreach (var rawLine in lines)
         {
-            var line = Regex.Replace(rawLine, @"//.*$", string.Empty).TrimEnd();
+            var line = rawLine.TrimEnd();
             if (line.Length == 0)
                 continue;
 
@@ -594,6 +596,137 @@ public class HeaderParserService
             if (expr.Length > 0)
                 yield return new KeyValuePair<string, string>(name, expr);
         }
+    }
+
+    private static string NormalizeDeclarationText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var stripped = StripCommentsPreservingLiterals(text);
+        var semicolonIndex = stripped.IndexOf(';');
+        if (semicolonIndex >= 0)
+            stripped = stripped[..semicolonIndex];
+
+        return stripped.Trim();
+    }
+
+    private static string StripCommentsPreservingLiterals(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+
+        var builder = new StringBuilder(text.Length);
+        var state = CommentStripState.Code;
+        var escapeNext = false;
+
+        for (var index = 0; index < text.Length; index++)
+        {
+            var current = text[index];
+            var next = index + 1 < text.Length ? text[index + 1] : '\0';
+
+            switch (state)
+            {
+                case CommentStripState.LineComment:
+                    if (current is '\r' or '\n')
+                    {
+                        state = CommentStripState.Code;
+                        builder.Append(current);
+                    }
+                    continue;
+
+                case CommentStripState.BlockComment:
+                    if (current == '*' && next == '/')
+                    {
+                        state = CommentStripState.Code;
+                        index++;
+                        continue;
+                    }
+
+                    if (current is '\r' or '\n')
+                        builder.Append(current);
+                    continue;
+
+                case CommentStripState.StringLiteral:
+                    builder.Append(current);
+                    if (escapeNext)
+                    {
+                        escapeNext = false;
+                    }
+                    else if (current == '\\')
+                    {
+                        escapeNext = true;
+                    }
+                    else if (current == '"')
+                    {
+                        state = CommentStripState.Code;
+                    }
+                    continue;
+
+                case CommentStripState.CharLiteral:
+                    builder.Append(current);
+                    if (escapeNext)
+                    {
+                        escapeNext = false;
+                    }
+                    else if (current == '\\')
+                    {
+                        escapeNext = true;
+                    }
+                    else if (current == '\'')
+                    {
+                        state = CommentStripState.Code;
+                    }
+                    continue;
+            }
+
+            if (current == '/' && next == '/')
+            {
+                AppendSpaceIfNeeded(builder);
+                state = CommentStripState.LineComment;
+                index++;
+                continue;
+            }
+
+            if (current == '/' && next == '*')
+            {
+                AppendSpaceIfNeeded(builder);
+                state = CommentStripState.BlockComment;
+                index++;
+                continue;
+            }
+
+            builder.Append(current);
+            if (current == '"')
+            {
+                state = CommentStripState.StringLiteral;
+            }
+            else if (current == '\'')
+            {
+                state = CommentStripState.CharLiteral;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static void AppendSpaceIfNeeded(StringBuilder builder)
+    {
+        if (builder.Length == 0)
+            return;
+
+        var last = builder[^1];
+        if (!char.IsWhiteSpace(last))
+            builder.Append(' ');
+    }
+
+    private enum CommentStripState
+    {
+        Code,
+        LineComment,
+        BlockComment,
+        StringLiteral,
+        CharLiteral
     }
 
     // Post-processing: resolve references, then rebuild layout with the app's x64 rules.
