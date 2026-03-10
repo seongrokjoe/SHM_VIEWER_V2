@@ -295,6 +295,7 @@
                                 <TreeView.Resources>
                                     <Style TargetType="TreeViewItem">
                                         <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                                        <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
                                         <Setter Property="Background" Value="Transparent"/>
                                         <Setter Property="Foreground" Value="#D4D4D4"/>
                                         <Setter Property="Padding" Value="0"/>

@@ -119,6 +119,37 @@ public sealed class SearchNavigationHelperTests
     }
 
     [Fact]
+    public async Task FindNodeByPathAsync_ResolvesExamplePortPathToFirstLeafNode()
+    {
+        const string header = """
+            typedef struct FoupInfo {
+                int src_port;
+            } FoupInfo;
+
+            typedef struct PortInfoEntry {
+                FoupInfo foupinfo[2];
+            } PortInfoEntry;
+
+            typedef struct Root {
+                PortInfoEntry PortInfo[2];
+            } Root;
+            """;
+
+        var result = ParseHeader(header);
+        var rootType = AssertType(result.Database, "Root");
+        var tab = CreateTab(result.Database, rootType);
+        tab.BuildTree();
+
+        var match = await SearchNavigationHelper.FindNodeByPathAsync(tab, "PortInfo[n].foupinfo[n].src_port");
+
+        Assert.NotNull(match);
+        Assert.Equal("src_port", match!.Node.Name);
+        Assert.Equal(
+            new[] { "Root", "PortInfo", "[0]", "foupinfo", "[0]" },
+            match.AncestorPath.Select(node => node.Name).ToArray());
+    }
+
+    [Fact]
     public async Task FindNodeByPathAsync_ReturnsNullForUnknownPath()
     {
         const string header = """

@@ -16,6 +16,7 @@ public partial class TreeNodeViewModel : ObservableObject
     [ObservableProperty] private int _size;
     [ObservableProperty] private string _value = string.Empty;
     [ObservableProperty] private bool _isExpanded;
+    [ObservableProperty] private bool _isSelected;
     [ObservableProperty] private bool _isSpare;
     [ObservableProperty] private bool _isHighlighted;
     [ObservableProperty] private bool _isLazy;

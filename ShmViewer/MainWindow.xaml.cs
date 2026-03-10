@@ -7,6 +7,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Diagnostics;
 using System.Threading;
 
 namespace ShmViewer;
@@ -22,6 +23,25 @@ public partial class MainWindow : Window
     private double _col2WidthStart;
     private GridSplitter? _currentSplitter;
     private int _searchNavigationRequestId;
+    private TreeNodeViewModel? _lastSearchNavigatedNode;
+
+    private enum SearchNavigationFailureReason
+    {
+        None,
+        TreeViewUnavailable,
+        NodePathNotFound,
+        AncestorContainerUnavailable,
+        TargetContainerUnavailable
+    }
+
+    private sealed class SearchNavigationResult
+    {
+        public SearchNavigationFailureReason FailureReason { get; init; }
+        public TreeViewItem? TargetItem { get; init; }
+        public TreeNodeViewModel? Node { get; init; }
+        public IReadOnlyList<TreeNodeViewModel> AncestorPath { get; init; } = Array.Empty<TreeNodeViewModel>();
+        public bool Succeeded => FailureReason == SearchNavigationFailureReason.None && TargetItem != null && Node != null;
+    }
 
     public MainWindow()
     {
@@ -254,31 +274,20 @@ public partial class MainWindow : Window
     {
         var requestId = Interlocked.Increment(ref _searchNavigationRequestId);
 
-        ClearSearchHighlights();
+        ResetPreviousSearchNavigationState();
 
-        _vm.SelectedTab = result.Tab;
-
-        var treeView = await WaitForTreeViewAsync(result.Tab, requestId);
-        if (treeView == null || !IsCurrentSearchNavigation(requestId))
-            return;
-
-        var match = await SearchNavigationHelper.FindNodeByPathAsync(result.Tab, result.NodePath);
-        if (match == null || !IsCurrentSearchNavigation(requestId))
-            return;
-
-        result.Node = match.Node;
-        result.AncestorPath = match.AncestorPath;
-
-        match.Node.IsHighlighted = true;
-
-        var item = await SelectAndScrollToNodeAsync(treeView, match, requestId);
-        if (item == null || !IsCurrentSearchNavigation(requestId))
+        var navigation = await TryNavigateToSearchResultAsync(result, requestId);
+        if (!navigation.Succeeded)
         {
-            match.Node.IsHighlighted = false;
+            TraceSearchNavigationFailure(result, navigation.FailureReason);
             return;
         }
 
-        ApplySelectionToTreeViewItem(item, match.Node);
+        result.Node = navigation.Node;
+        result.AncestorPath = navigation.AncestorPath.ToList();
+        _lastSearchNavigatedNode = navigation.Node;
+
+        ApplySelectionToTreeViewItem(navigation.TargetItem!, navigation.Node!);
     }
 
     private static SearchResultViewModel? ResolveSearchResultFromDoubleClick(MouseButtonEventArgs e)
@@ -290,13 +299,83 @@ public partial class MainWindow : Window
         return row?.Item as SearchResultViewModel;
     }
 
-    private void ClearSearchHighlights()
+    private void ResetPreviousSearchNavigationState()
     {
+        if (_lastSearchNavigatedNode != null)
+        {
+            _lastSearchNavigatedNode.IsHighlighted = false;
+            _lastSearchNavigatedNode.IsSelected = false;
+            _lastSearchNavigatedNode = null;
+        }
+
         foreach (var entry in _vm.SearchResults)
         {
             if (entry.Node != null)
                 entry.Node.IsHighlighted = false;
         }
+    }
+
+    private async Task<SearchNavigationResult> TryNavigateToSearchResultAsync(
+        SearchResultViewModel result,
+        int requestId)
+    {
+        _vm.SelectedTab = result.Tab;
+
+        var treeView = await WaitForTreeViewAsync(result.Tab, requestId);
+        if (treeView == null || !IsCurrentSearchNavigation(requestId))
+        {
+            return new SearchNavigationResult
+            {
+                FailureReason = SearchNavigationFailureReason.TreeViewUnavailable
+            };
+        }
+
+        var match = await SearchNavigationHelper.FindNodeByPathAsync(result.Tab, result.NodePath);
+        if (match == null || !IsCurrentSearchNavigation(requestId))
+        {
+            return new SearchNavigationResult
+            {
+                FailureReason = SearchNavigationFailureReason.NodePathNotFound
+            };
+        }
+
+        match.Node.IsHighlighted = true;
+        match.Node.IsSelected = true;
+
+        var parent = await ExpandAncestorChainAsync(treeView, match.AncestorPath, requestId);
+        if (parent == null || !IsCurrentSearchNavigation(requestId))
+        {
+            ResetNodeNavigationState(match.Node);
+            return new SearchNavigationResult
+            {
+                FailureReason = SearchNavigationFailureReason.AncestorContainerUnavailable
+            };
+        }
+
+        var item = await WaitForContainerAsync(parent, match.Node, requestId);
+        if (item == null || !IsCurrentSearchNavigation(requestId))
+        {
+            ResetNodeNavigationState(match.Node);
+            return new SearchNavigationResult
+            {
+                FailureReason = SearchNavigationFailureReason.TargetContainerUnavailable
+            };
+        }
+
+        await Dispatcher.InvokeAsync(() =>
+        {
+            item.UpdateLayout();
+            item.BringIntoView();
+            EnsureTreeItemVisible(treeView, item);
+        }, DispatcherPriority.Background);
+
+        return new SearchNavigationResult
+        {
+            FailureReason = SearchNavigationFailureReason.None,
+            TargetItem = item,
+            Node = match.Node,
+            AncestorPath = match.AncestorPath
+        };
     }
 
     private bool IsCurrentSearchNavigation(int requestId) =>
@@ -323,29 +402,6 @@ public partial class MainWindow : Window
         }
 
         return null;
-    }
-
-    private async Task<TreeViewItem?> SelectAndScrollToNodeAsync(
-        TreeView treeView,
-        SearchNodeMatch match,
-        int requestId)
-    {
-        var parent = await ExpandAncestorChainAsync(treeView, match.AncestorPath, requestId);
-        if (parent == null || !IsCurrentSearchNavigation(requestId))
-            return null;
-
-        var item = await WaitForContainerAsync(parent, match.Node, requestId);
-        if (item == null || !IsCurrentSearchNavigation(requestId))
-            return null;
-
-        await Dispatcher.InvokeAsync(() =>
-        {
-            item.UpdateLayout();
-            item.BringIntoView();
-            EnsureTreeItemVisible(treeView, item);
-        }, DispatcherPriority.Background);
-
-        return item;
     }
 
     private async Task<ItemsControl?> ExpandAncestorChainAsync(
@@ -455,7 +511,7 @@ public partial class MainWindow : Window
         if (index < 0)
             return;
 
-        if (FindVisualChild<VirtualizingStackPanel>(parent) is { } vsp)
+        if (FindItemsHostPanel(parent) is { } vsp)
             vsp.BringIndexIntoViewPublic(index);
 
         parent.UpdateLayout();
@@ -463,12 +519,19 @@ public partial class MainWindow : Window
 
     private static void ApplySelectionToTreeViewItem(TreeViewItem item, TreeNodeViewModel node)
     {
+        node.IsSelected = true;
         item.UpdateLayout();
         item.IsSelected = true;
         item.Focus();
         Keyboard.Focus(item);
         item.BringIntoView();
         node.IsHighlighted = false;
+    }
+
+    private static void ResetNodeNavigationState(TreeNodeViewModel node)
+    {
+        node.IsHighlighted = false;
+        node.IsSelected = false;
     }
 
     private static void EnsureTreeItemVisible(TreeView treeView, TreeViewItem item)
@@ -519,6 +582,52 @@ public partial class MainWindow : Window
         }
 
         return null;
+    }
+
+    private static VirtualizingStackPanel? FindItemsHostPanel(ItemsControl parent)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is VirtualizingStackPanel panel &&
+                ReferenceEquals(ItemsControl.GetItemsOwner(panel), parent))
+            {
+                return panel;
+            }
+
+            var nested = FindItemsHostPanel(child, parent);
+            if (nested != null)
+                return nested;
+        }
+
+        return null;
+    }
+
+    private static VirtualizingStackPanel? FindItemsHostPanel(DependencyObject parent, ItemsControl owner)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is VirtualizingStackPanel panel &&
+                ReferenceEquals(ItemsControl.GetItemsOwner(panel), owner))
+            {
+                return panel;
+            }
+
+            var nested = FindItemsHostPanel(child, owner);
+            if (nested != null)
+                return nested;
+        }
+
+        return null;
+    }
+
+    private static void TraceSearchNavigationFailure(
+        SearchResultViewModel result,
+        SearchNavigationFailureReason failureReason)
+    {
+        Debug.WriteLine(
+            $"Search navigation failed: {failureReason} | Tab={result.TabName} | Path={result.NodePath}");
     }
 
     private async void TreeViewItem_Expanded(object sender, RoutedEventArgs e)
