@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private enum SearchNavigationFailureReason
     {
         None,
+        SelectedContentUnavailable,
         TreeViewUnavailable,
         NodePathNotFound,
         AncestorContainerUnavailable,
@@ -41,6 +42,12 @@ public partial class MainWindow : Window
         public TreeNodeViewModel? Node { get; init; }
         public IReadOnlyList<TreeNodeViewModel> AncestorPath { get; init; } = Array.Empty<TreeNodeViewModel>();
         public bool Succeeded => FailureReason == SearchNavigationFailureReason.None && TargetItem != null && Node != null;
+    }
+
+    private sealed class SelectedTreeViewContext
+    {
+        public ContentPresenter? SelectedContentHost { get; init; }
+        public TreeView? TreeView { get; init; }
     }
 
     public MainWindow()
@@ -321,8 +328,24 @@ public partial class MainWindow : Window
     {
         _vm.SelectedTab = result.Tab;
 
-        var treeView = await WaitForTreeViewAsync(result.Tab, requestId);
-        if (treeView == null || !IsCurrentSearchNavigation(requestId))
+        var treeContext = await WaitForTreeViewAsync(result.Tab, requestId);
+        if (!IsCurrentSearchNavigation(requestId))
+        {
+            return new SearchNavigationResult
+            {
+                FailureReason = SearchNavigationFailureReason.TreeViewUnavailable
+            };
+        }
+
+        if (treeContext.SelectedContentHost == null)
+        {
+            return new SearchNavigationResult
+            {
+                FailureReason = SearchNavigationFailureReason.SelectedContentUnavailable
+            };
+        }
+
+        if (treeContext.TreeView == null)
         {
             return new SearchNavigationResult
             {
@@ -342,7 +365,7 @@ public partial class MainWindow : Window
         match.Node.IsHighlighted = true;
         match.Node.IsSelected = true;
 
-        var parent = await ExpandAncestorChainAsync(treeView, match.AncestorPath, requestId);
+        var parent = await ExpandAncestorChainAsync(treeContext.TreeView, match.AncestorPath, requestId);
         if (parent == null || !IsCurrentSearchNavigation(requestId))
         {
             ResetNodeNavigationState(match.Node);
@@ -366,7 +389,7 @@ public partial class MainWindow : Window
         {
             item.UpdateLayout();
             item.BringIntoView();
-            EnsureTreeItemVisible(treeView, item);
+            EnsureTreeItemVisible(treeContext.TreeView, item);
         }, DispatcherPriority.Background);
 
         return new SearchNavigationResult
@@ -381,19 +404,19 @@ public partial class MainWindow : Window
     private bool IsCurrentSearchNavigation(int requestId) =>
         requestId == Volatile.Read(ref _searchNavigationRequestId);
 
-    private async Task<TreeView?> WaitForTreeViewAsync(ShmTabViewModel tab, int requestId)
+    private async Task<SelectedTreeViewContext> WaitForTreeViewAsync(ShmTabViewModel tab, int requestId)
     {
         for (int attempt = 0; attempt < SearchNavigationMaxAttempts; attempt++)
         {
             if (!IsCurrentSearchNavigation(requestId))
-                return null;
+                return new SelectedTreeViewContext();
 
-            var treeView = FindTreeViewForTab(tab);
-            if (treeView != null && treeView.IsLoaded)
+            var treeContext = FindTreeViewForTab(tab);
+            if (treeContext.TreeView != null && treeContext.TreeView.IsLoaded)
             {
-                treeView.ApplyTemplate();
-                treeView.UpdateLayout();
-                return treeView;
+                treeContext.TreeView.ApplyTemplate();
+                treeContext.TreeView.UpdateLayout();
+                return treeContext;
             }
 
             await Dispatcher.InvokeAsync(() => { }, attempt == 0
@@ -401,7 +424,7 @@ public partial class MainWindow : Window
                 : DispatcherPriority.Background);
         }
 
-        return null;
+        return FindTreeViewForTab(tab);
     }
 
     private async Task<ItemsControl?> ExpandAncestorChainAsync(
@@ -481,11 +504,11 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private TreeView? FindTreeViewForTab(ShmTabViewModel tab)
+    private SelectedTreeViewContext FindTreeViewForTab(ShmTabViewModel tab)
     {
         var tabControl = FindVisualChild<TabControl>(this);
         if (tabControl == null)
-            return null;
+            return new SelectedTreeViewContext();
 
         if (!ReferenceEquals(tabControl.SelectedItem, tab))
             tabControl.SelectedItem = tab;
@@ -493,16 +516,34 @@ public partial class MainWindow : Window
         tabControl.ApplyTemplate();
         tabControl.UpdateLayout();
 
-        var tabItem = tabControl.ItemContainerGenerator.ContainerFromItem(tab) as TabItem;
-        if (tabItem == null)
-            return null;
+        var selectedContentHost = tabControl.Template?.FindName("PART_SelectedContentHost", tabControl) as ContentPresenter;
+        if (selectedContentHost != null)
+        {
+            selectedContentHost.ApplyTemplate();
+            selectedContentHost.UpdateLayout();
 
-        if (!tabItem.IsSelected)
-            tabItem.IsSelected = true;
+            var selectedTree = FindVisualDescendant<TreeView>(
+                selectedContentHost,
+                tree => ReferenceEquals(tree.DataContext, tab));
+            if (selectedTree != null)
+            {
+                return new SelectedTreeViewContext
+                {
+                    SelectedContentHost = selectedContentHost,
+                    TreeView = selectedTree
+                };
+            }
+        }
 
-        tabItem.ApplyTemplate();
-        tabItem.UpdateLayout();
-        return FindVisualChild<TreeView>(tabItem);
+        var fallbackTree = FindVisualDescendant<TreeView>(
+            tabControl,
+            tree => ReferenceEquals(tree.DataContext, tab));
+
+        return new SelectedTreeViewContext
+        {
+            SelectedContentHost = selectedContentHost,
+            TreeView = fallbackTree
+        };
     }
 
     private void TryBringItemContainerIntoView(ItemsControl parent, object item)
@@ -577,6 +618,24 @@ public partial class MainWindow : Window
                 return result;
 
             var nested = FindVisualChild<T>(child);
+            if (nested != null)
+                return nested;
+        }
+
+        return null;
+    }
+
+    private static T? FindVisualDescendant<T>(
+        DependencyObject parent,
+        Func<T, bool> predicate) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T match && predicate(match))
+                return match;
+
+            var nested = FindVisualDescendant(child, predicate);
             if (nested != null)
                 return nested;
         }
