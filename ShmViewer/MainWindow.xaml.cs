@@ -249,89 +249,78 @@ public partial class MainWindow : Window
 
         await Dispatcher.Yield(DispatcherPriority.Loaded);
 
-        var (node, ancestorPath) = await FindNodeByPathAsync(result.Tab, result.NodePath);
-        if (node == null)
+        var match = await SearchNavigationHelper.FindNodeByPathAsync(result.Tab, result.NodePath);
+        if (match == null)
             return;
 
-        result.Node = node;
-        result.AncestorPath = ancestorPath;
+        result.Node = match.Node;
+        result.AncestorPath = match.AncestorPath;
 
-        foreach (var ancestor in ancestorPath)
+        foreach (var ancestor in match.AncestorPath)
             ancestor.IsExpanded = true;
 
-        node.IsHighlighted = true;
+        match.Node.IsHighlighted = true;
 
         await Dispatcher.Yield(DispatcherPriority.Loaded);
-        BringNodeIntoView(node, ancestorPath);
+        SelectAndBringNodeIntoView(match.Node, match.AncestorPath);
     }
 
-    private static async Task<(TreeNodeViewModel? node, List<TreeNodeViewModel> ancestorPath)> FindNodeByPathAsync(
-        ShmTabViewModel tab,
-        string nodePath)
+    private void SelectAndBringNodeIntoView(TreeNodeViewModel node, List<TreeNodeViewModel>? ancestorPath = null)
     {
-        var ancestorPath = new List<TreeNodeViewModel>();
-        if (tab.RootNodes.Count == 0)
-            return (null, ancestorPath);
-
-        var current = tab.RootNodes[0];
-        if (string.IsNullOrEmpty(nodePath))
-            return (current, ancestorPath);
-
-        foreach (var part in nodePath.Split('.'))
-        {
-            if (current.IsLazy || current.IsExpanding)
-                await tab.ExpandNodeAsync(current);
-
-            var name = part.Contains('[') ? part[..part.IndexOf('[')] : part;
-            if (string.IsNullOrEmpty(name))
-                continue;
-
-            var child = current.Children.FirstOrDefault(c => c.Name == name);
-            if (child == null)
-                break;
-
-            ancestorPath.Add(current);
-            current = child;
-        }
-
-        return (current, ancestorPath);
-    }
-
-    private void BringNodeIntoView(TreeNodeViewModel node, List<TreeNodeViewModel>? ancestorPath = null)
-    {
-        var tabControl = FindVisualChild<TabControl>(this);
-        if (tabControl?.SelectedItem is not ShmTabViewModel selectedTab)
-            return;
-
-        var tabItem = tabControl.ItemContainerGenerator.ContainerFromItem(selectedTab) as TabItem;
-        if (tabItem == null)
-            return;
-
-        var treeView = FindVisualChild<TreeView>(tabItem);
+        var treeView = FindSelectedTreeView();
         if (treeView == null)
             return;
 
-        if (ancestorPath is { Count: > 0 })
-        {
-            var item = FindTreeViewItemWithVirtualization(treeView, node, ancestorPath);
-            if (item != null)
-            {
-                Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
-                {
-                    item.BringIntoView();
-                });
-            }
-            return;
-        }
-
-        var directItem = FindTreeViewItem(treeView, node);
-        if (directItem != null)
+        var item = FindRealizedTreeViewItem(treeView, node, ancestorPath);
+        if (item == null)
         {
             Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
             {
-                directItem.BringIntoView();
+                var retryItem = FindRealizedTreeViewItem(treeView, node, ancestorPath);
+                if (retryItem == null)
+                    return;
+
+                ApplySelectionToTreeViewItem(retryItem, node);
             });
+            return;
         }
+
+        ApplySelectionToTreeViewItem(item, node);
+    }
+
+    private TreeView? FindSelectedTreeView()
+    {
+        var tabControl = FindVisualChild<TabControl>(this);
+        if (tabControl?.SelectedItem is not ShmTabViewModel selectedTab)
+            return null;
+
+        var tabItem = tabControl.ItemContainerGenerator.ContainerFromItem(selectedTab) as TabItem;
+        if (tabItem == null)
+            return null;
+
+        return FindVisualChild<TreeView>(tabItem);
+    }
+
+    private TreeViewItem? FindRealizedTreeViewItem(
+        TreeView treeView,
+        TreeNodeViewModel node,
+        List<TreeNodeViewModel>? ancestorPath)
+    {
+        if (ancestorPath is { Count: > 0 })
+        {
+            return FindTreeViewItemWithVirtualization(treeView, node, ancestorPath);
+        }
+
+        return FindTreeViewItem(treeView, node);
+    }
+
+    private static void ApplySelectionToTreeViewItem(TreeViewItem item, TreeNodeViewModel node)
+    {
+        item.IsSelected = true;
+        item.Focus();
+        Keyboard.Focus(item);
+        item.BringIntoView();
+        node.IsHighlighted = false;
     }
 
     private TreeViewItem? FindTreeViewItemWithVirtualization(
