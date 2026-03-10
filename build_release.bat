@@ -8,6 +8,7 @@ set "PROJECT=%ROOT%ShmViewer\ShmViewer.csproj"
 set "DIST=%ROOT%dist"
 set "PUBLISH_DIR=%DIST%\ShmViewer"
 set "ZIP_PATH=%DIST%\ShmViewer_Release.zip"
+set "HELP_FILE=%ROOT%help.txt"
 set "NO_PAUSE="
 
 if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
@@ -38,6 +39,7 @@ echo.
 echo [3/3] Finalizing package...
 if exist "%PUBLISH_DIR%\runtimes" rmdir /s /q "%PUBLISH_DIR%\runtimes"
 if exist "%PUBLISH_DIR%\ShmViewer.pdb" del /q "%PUBLISH_DIR%\ShmViewer.pdb"
+if exist "%HELP_FILE%" copy /y "%HELP_FILE%" "%PUBLISH_DIR%\help.txt" >nul
 
 if not exist "%PUBLISH_DIR%\ShmViewer.exe" goto :exe_missing
 

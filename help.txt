@@ -1,0 +1,8 @@
+SHM Viewer Help
+
+1. Launch ShmViewer.exe.
+2. Load one or more header files.
+3. Enter SHM Name and Struct, then click Load.
+4. Double-click a search result to navigate to the matching tree row.
+
+Requires .NET 8 Desktop Runtime.
