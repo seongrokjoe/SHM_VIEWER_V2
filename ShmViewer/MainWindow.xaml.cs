@@ -12,6 +12,8 @@ namespace ShmViewer;
 
 public partial class MainWindow : Window
 {
+    private const int SearchNavigationMaxAttempts = 6;
+
     private readonly MainViewModel _vm;
     private Point _gridSplitterStart;
     private double _col0WidthStart;
@@ -239,6 +241,11 @@ public partial class MainWindow : Window
         if (sender is not DataGrid grid || grid.SelectedItem is not SearchResultViewModel result)
             return;
 
+        await NavigateToSearchResultAsync(result);
+    }
+
+    private async Task NavigateToSearchResultAsync(SearchResultViewModel result)
+    {
         foreach (var entry in _vm.SearchResults)
         {
             if (entry.Node != null)
@@ -247,7 +254,9 @@ public partial class MainWindow : Window
 
         _vm.SelectedTab = result.Tab;
 
-        await Dispatcher.Yield(DispatcherPriority.Loaded);
+        var treeView = await WaitForSelectedTreeViewAsync();
+        if (treeView == null)
+            return;
 
         var match = await SearchNavigationHelper.FindNodeByPathAsync(result.Tab, result.NodePath);
         if (match == null)
@@ -261,31 +270,65 @@ public partial class MainWindow : Window
 
         match.Node.IsHighlighted = true;
 
-        await Dispatcher.Yield(DispatcherPriority.Loaded);
-        SelectAndBringNodeIntoView(match.Node, match.AncestorPath);
+        await EnsureAncestorsExpandedAsync(match.AncestorPath);
+
+        var item = await RealizeTreeViewItemAsync(treeView, match.Node, match.AncestorPath);
+        if (item == null)
+            return;
+
+        ApplySelectionToTreeViewItem(item, match.Node);
     }
 
-    private void SelectAndBringNodeIntoView(TreeNodeViewModel node, List<TreeNodeViewModel>? ancestorPath = null)
+    private async Task<TreeView?> WaitForSelectedTreeViewAsync()
     {
-        var treeView = FindSelectedTreeView();
-        if (treeView == null)
-            return;
-
-        var item = FindRealizedTreeViewItem(treeView, node, ancestorPath);
-        if (item == null)
+        for (int attempt = 0; attempt < SearchNavigationMaxAttempts; attempt++)
         {
-            Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+            var treeView = FindSelectedTreeView();
+            if (treeView != null)
             {
-                var retryItem = FindRealizedTreeViewItem(treeView, node, ancestorPath);
-                if (retryItem == null)
-                    return;
+                treeView.UpdateLayout();
+                return treeView;
+            }
 
-                ApplySelectionToTreeViewItem(retryItem, node);
-            });
-            return;
+            await Dispatcher.Yield(attempt == 0
+                ? DispatcherPriority.Loaded
+                : DispatcherPriority.Background);
         }
 
-        ApplySelectionToTreeViewItem(item, node);
+        return null;
+    }
+
+    private async Task EnsureAncestorsExpandedAsync(List<TreeNodeViewModel> ancestorPath)
+    {
+        if (ancestorPath.Count == 0)
+            return;
+
+        foreach (var ancestor in ancestorPath)
+            ancestor.IsExpanded = true;
+
+        for (int attempt = 0; attempt < 2; attempt++)
+            await Dispatcher.Yield(DispatcherPriority.Background);
+    }
+
+    private async Task<TreeViewItem?> RealizeTreeViewItemAsync(
+        TreeView treeView,
+        TreeNodeViewModel node,
+        List<TreeNodeViewModel>? ancestorPath)
+    {
+        for (int attempt = 0; attempt < SearchNavigationMaxAttempts; attempt++)
+        {
+            treeView.UpdateLayout();
+
+            var item = FindRealizedTreeViewItem(treeView, node, ancestorPath);
+            if (item != null)
+                return item;
+
+            await Dispatcher.Yield(attempt == 0
+                ? DispatcherPriority.Loaded
+                : DispatcherPriority.Background);
+        }
+
+        return null;
     }
 
     private TreeView? FindSelectedTreeView()
@@ -294,10 +337,13 @@ public partial class MainWindow : Window
         if (tabControl?.SelectedItem is not ShmTabViewModel selectedTab)
             return null;
 
+        tabControl.UpdateLayout();
+
         var tabItem = tabControl.ItemContainerGenerator.ContainerFromItem(selectedTab) as TabItem;
         if (tabItem == null)
             return null;
 
+        tabItem.UpdateLayout();
         return FindVisualChild<TreeView>(tabItem);
     }
 
@@ -316,6 +362,7 @@ public partial class MainWindow : Window
 
     private static void ApplySelectionToTreeViewItem(TreeViewItem item, TreeNodeViewModel node)
     {
+        item.UpdateLayout();
         item.IsSelected = true;
         item.Focus();
         Keyboard.Focus(item);
