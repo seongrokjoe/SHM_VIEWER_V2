@@ -15,6 +15,9 @@
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
+        <Style x:Key="TreeCellTextStyle" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="TextWrapping" Value="NoWrap"/>
+        </Style>
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="#3C3C3C"/>
             <Setter Property="Foreground" Value="#D4D4D4"/>
@@ -342,10 +345,11 @@
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
                                             <!-- Column 0: SIZE (+offset) -->
-                                            <TextBox Grid.Column="0" Text="{Binding SizeDisplay, Mode=OneWay}" IsReadOnly="True"
-                                                     Background="Transparent" BorderThickness="0,0,1,0" BorderBrush="#333" IsTabStop="False"
-                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
-                                                     Foreground="#B5CEA8"/>
+                                            <Border Grid.Column="0" BorderThickness="0,0,1,0" BorderBrush="#333">
+                                                <TextBlock Style="{StaticResource TreeCellTextStyle}"
+                                                           Text="{Binding SizeDisplay, Mode=OneWay}"
+                                                           Foreground="#B5CEA8"/>
+                                            </Border>
                                             <Border Grid.Column="1"/>
                                             <!-- Column 2: TYPE (with tree expander + level indent) -->
                                             <Border Grid.Column="2" BorderThickness="0,0,1,0" BorderBrush="#333">
@@ -354,24 +358,37 @@
                                                     <ToggleButton Style="{StaticResource ExpanderToggleStyle}"
                                                                   IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource AncestorType=TreeViewItem}}"
                                                                   Visibility="{Binding HasChildren, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
-                                                    <TextBox Text="{Binding TypeName}" IsReadOnly="True"
-                                                             Background="Transparent" BorderThickness="0" IsTabStop="False"
-                                                             FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
-                                                             Foreground="#4EC9B0"/>
+                                                    <Border Background="Transparent"
+                                                            MouseRightButtonUp="TreeCell_MouseRightButtonUp"
+                                                            Tag="{x:Static local:TreeCellKind.Type}">
+                                                        <TextBlock Style="{StaticResource TreeCellTextStyle}"
+                                                                   Text="{Binding TypeName}"
+                                                                   Foreground="#4EC9B0"/>
+                                                    </Border>
                                                 </StackPanel>
                                             </Border>
                                             <Border Grid.Column="3"/>
                                             <!-- Column 4: NAME -->
-                                            <TextBox Grid.Column="4" Text="{Binding Name}" IsReadOnly="True"
-                                                     Background="Transparent" BorderThickness="0,0,1,0" BorderBrush="#333" IsTabStop="False"
-                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
-                                                     Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
+                                            <Border Grid.Column="4"
+                                                    Background="Transparent"
+                                                    BorderThickness="0,0,1,0"
+                                                    BorderBrush="#333"
+                                                    MouseRightButtonUp="TreeCell_MouseRightButtonUp"
+                                                    Tag="{x:Static local:TreeCellKind.Name}">
+                                                <TextBlock Style="{StaticResource TreeCellTextStyle}"
+                                                           Text="{Binding Name}"
+                                                           Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
+                                            </Border>
                                             <Border Grid.Column="5"/>
                                             <!-- Column 6: VALUE -->
-                                            <TextBox Grid.Column="6" Text="{Binding Value}" IsReadOnly="True"
-                                                     Background="Transparent" BorderThickness="0" IsTabStop="False"
-                                                     FontFamily="Consolas" FontSize="12" Padding="0" Margin="0"
-                                                     Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
+                                            <Border Grid.Column="6"
+                                                    Background="Transparent"
+                                                    MouseRightButtonUp="TreeCell_MouseRightButtonUp"
+                                                    Tag="{x:Static local:TreeCellKind.Value}">
+                                                <TextBlock Style="{StaticResource TreeCellTextStyle}"
+                                                           Text="{Binding Value}"
+                                                           Foreground="{Binding IsSpare, Converter={x:Static local:SpareColorConverter.Instance}}"/>
+                                            </Border>
                                         </Grid>
                                     </HierarchicalDataTemplate>
                                 </TreeView.ItemTemplate>

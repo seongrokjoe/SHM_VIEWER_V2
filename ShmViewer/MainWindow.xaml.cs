@@ -2,6 +2,7 @@ using ShmViewer.ViewModels;
 using ShmViewer.Views.Dialogs;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -76,31 +77,95 @@ public partial class MainWindow : Window
 
     private void TreeView_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not TreeView tree)
+        SelectTreeViewItemFromSource(e.OriginalSource as DependencyObject);
+    }
+
+    private void TreeCell_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement element ||
+            element.DataContext is not TreeNodeViewModel node ||
+            element.Tag is not TreeCellKind cellKind)
+        {
             return;
+        }
 
-        var source = e.OriginalSource as DependencyObject;
-        while (source != null && source is not TreeViewItem)
-            source = VisualTreeHelper.GetParent(source);
+        SelectTreeViewItemFromSource(element);
 
-        if (source is not TreeViewItem item || item.DataContext is not TreeNodeViewModel node)
-            return;
+        var action = TreeCellContextMenuPolicy.ResolveAction(cellKind, node);
+        switch (action)
+        {
+            case TreeCellContextAction.Copy:
+                ShowCopyMenu(element, GetDisplayedText(element));
+                e.Handled = true;
+                break;
 
-        item.IsSelected = true;
+            case TreeCellContextAction.ShowBinary:
+                ShowBinaryMenu(element, node);
+                e.Handled = true;
+                break;
+        }
+    }
 
-        if (node.MemberInfo == null || node.MemberInfo.ResolvedType != null)
-            return;
+    private void ShowCopyMenu(FrameworkElement placementTarget, string text)
+    {
+        var menuItem = new MenuItem
+        {
+            Header = "복사하기"
+        };
+        menuItem.Click += (_, _) => CopyText(text);
+        OpenContextMenu(placementTarget, menuItem);
+    }
 
-        var contextMenu = new ContextMenu();
+    private void ShowBinaryMenu(FrameworkElement placementTarget, TreeNodeViewModel node)
+    {
         var menuItem = new MenuItem
         {
             Header = "바이너리 확인"
         };
         menuItem.Click += (_, _) => ShowDetailPopup(node);
-        contextMenu.Items.Add(menuItem);
-        contextMenu.PlacementTarget = tree;
+        OpenContextMenu(placementTarget, menuItem);
+    }
+
+    private static void OpenContextMenu(FrameworkElement placementTarget, params MenuItem[] items)
+    {
+        if (items.Length == 0)
+            return;
+
+        var contextMenu = new ContextMenu
+        {
+            PlacementTarget = placementTarget,
+            Placement = PlacementMode.MousePoint
+        };
+
+        foreach (var item in items)
+            contextMenu.Items.Add(item);
+
         contextMenu.IsOpen = true;
-        e.Handled = true;
+    }
+
+    private static string GetDisplayedText(FrameworkElement element)
+    {
+        if (element is TextBlock textBlock)
+            return textBlock.Text;
+
+        var childTextBlock = FindVisualChild<TextBlock>(element);
+        return childTextBlock?.Text ?? string.Empty;
+    }
+
+    private static void CopyText(string text)
+    {
+        try
+        {
+            Clipboard.SetText(text ?? string.Empty);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"복사 실패: {ex.Message}",
+                "오류",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
     }
 
     private void ShowDetailPopup(TreeNodeViewModel node)
@@ -140,12 +205,27 @@ public partial class MainWindow : Window
 
     private void TreeView_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        var source = e.OriginalSource as DependencyObject;
-        while (source != null && source is not TreeViewItem)
-            source = VisualTreeHelper.GetParent(source);
+        SelectTreeViewItemFromSource(e.OriginalSource as DependencyObject);
+    }
 
-        if (source is TreeViewItem item)
+    private static void SelectTreeViewItemFromSource(DependencyObject? source)
+    {
+        var item = FindAncestor<TreeViewItem>(source);
+        if (item != null)
             item.IsSelected = true;
+    }
+
+    private static T? FindAncestor<T>(DependencyObject? source) where T : DependencyObject
+    {
+        while (source != null)
+        {
+            if (source is T target)
+                return target;
+
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return null;
     }
 
     private void SearchBox_KeyDown(object sender, KeyEventArgs e)
