@@ -23,6 +23,17 @@ public class BoolToVisConverter : IValueConverter
     public object ConvertBack(object v, Type t, object p, CultureInfo c) => throw new NotImplementedException();
 }
 
+public class InverseBoolConverter : IValueConverter
+{
+    public static readonly InverseBoolConverter Instance = new();
+
+    public object Convert(object value, Type t, object p, CultureInfo c) =>
+        value is bool flag ? !flag : value;
+
+    public object ConvertBack(object value, Type t, object p, CultureInfo c) =>
+        value is bool flag ? !flag : value;
+}
+
 public class SpareColorConverter : IValueConverter
 {
     public static readonly SpareColorConverter Instance = new();

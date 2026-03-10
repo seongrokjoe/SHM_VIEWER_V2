@@ -1,6 +1,5 @@
 using ShmViewer.ViewModels;
 using ShmViewer.Views.Dialogs;
-using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -13,6 +12,11 @@ namespace ShmViewer;
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _vm;
+    private Point _gridSplitterStart;
+    private double _col0WidthStart;
+    private double _col1WidthStart;
+    private double _col2WidthStart;
+    private GridSplitter? _currentSplitter;
 
     public MainWindow()
     {
@@ -20,23 +24,19 @@ public partial class MainWindow : Window
         _vm = new MainViewModel();
         DataContext = _vm;
 
-        // Add lazy loading event handler (on Window so all tabs' TreeViews are covered)
-        this.Loaded += (s, e) =>
+        Loaded += (_, _) =>
         {
-            this.AddHandler(TreeViewItem.ExpandedEvent,
-                new RoutedEventHandler(TreeViewItem_Expanded));
-
-            // Setup search results grouping
+            AddHandler(TreeViewItem.ExpandedEvent, new RoutedEventHandler(TreeViewItem_Expanded));
             SetupSearchResultsGrouping();
         };
 
-        this.PreviewMouseUp += (s, e) =>
+        PreviewMouseUp += (_, _) =>
         {
-            if (_currentSplitter != null)
-            {
-                _currentSplitter.ReleaseMouseCapture();
-                _currentSplitter = null;
-            }
+            if (_currentSplitter == null)
+                return;
+
+            _currentSplitter.ReleaseMouseCapture();
+            _currentSplitter = null;
         };
     }
 
@@ -46,13 +46,10 @@ public partial class MainWindow : Window
         cvs.GroupDescriptions.Add(new PropertyGroupDescription("TabName"));
         SearchResultGrid.ItemsSource = cvs.View;
 
-        // Update when search results change
-        _vm.PropertyChanged += (s, e) =>
+        _vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(MainViewModel.SearchResults))
-            {
                 cvs.Source = _vm.SearchResults;
-            }
         };
     }
 
@@ -66,39 +63,41 @@ public partial class MainWindow : Window
 
     private void Window_Drop(object sender, DragEventArgs e)
     {
-        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+            return;
+
         var files = (string[])e.Data.GetData(DataFormats.FileDrop);
         var headers = files.Where(f =>
             f.EndsWith(".h", StringComparison.OrdinalIgnoreCase) ||
             f.EndsWith(".hpp", StringComparison.OrdinalIgnoreCase));
+
         _vm.AddHeaderFiles(headers);
     }
 
     private void TreeView_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not TreeView tree) return;
+        if (sender is not TreeView tree)
+            return;
 
-        // VisualTree를 거슬러 올라가 클릭된 TreeViewItem 찾기
         var source = e.OriginalSource as DependencyObject;
         while (source != null && source is not TreeViewItem)
             source = VisualTreeHelper.GetParent(source);
-        if (source is not TreeViewItem tvi) return;
-        if (tvi.DataContext is not TreeNodeViewModel node) return;
 
-        // 선택 상태도 업데이트
-        tvi.IsSelected = true;
+        if (source is not TreeViewItem item || item.DataContext is not TreeNodeViewModel node)
+            return;
 
-        if (node.MemberInfo == null || node.MemberInfo.ResolvedType != null) return;
+        item.IsSelected = true;
 
-        // Show context menu
+        if (node.MemberInfo == null || node.MemberInfo.ResolvedType != null)
+            return;
+
         var contextMenu = new ContextMenu();
         var menuItem = new MenuItem
         {
             Header = "바이너리 확인"
         };
-        menuItem.Click += (s, args) => ShowDetailPopup(node);
+        menuItem.Click += (_, _) => ShowDetailPopup(node);
         contextMenu.Items.Add(menuItem);
-
         contextMenu.PlacementTarget = tree;
         contextMenu.IsOpen = true;
         e.Handled = true;
@@ -107,32 +106,35 @@ public partial class MainWindow : Window
     private void ShowDetailPopup(TreeNodeViewModel node)
     {
         var selectedTab = _vm.SelectedTab;
-        if (selectedTab == null) return;
+        if (selectedTab == null)
+            return;
 
         try
         {
             byte[]? data = null;
 
-            // SHM이 연결된 경우(Running) 실시간 데이터 읽기
             if (selectedTab.IsRunning && !string.IsNullOrEmpty(selectedTab.ShmName))
             {
                 var reader = new Core.Shm.ShmReader();
-                data = reader.ReadSnapshot(selectedTab.ShmName,
-                    node.Offset + node.Size + 64);
+                data = reader.ReadSnapshot(selectedTab.ShmName, node.Offset + node.Size + 64);
             }
 
-            // 데이터가 없으면 빈 배열로 팝업 (구조 정보만 표시)
             data ??= new byte[node.Offset + node.Size + 64];
 
-            var popup = new DetailPopup(node, data);
-            popup.Left = SystemParameters.PrimaryScreenWidth / 2 - 210;
-            popup.Top = SystemParameters.PrimaryScreenHeight / 2 - 200;
+            var popup = new DetailPopup(node, data)
+            {
+                Left = SystemParameters.PrimaryScreenWidth / 2 - 210,
+                Top = SystemParameters.PrimaryScreenHeight / 2 - 200
+            };
             popup.Show();
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"바이너리 확인 실패: {ex.Message}", "오류",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(
+                $"바이너리 확인 실패: {ex.Message}",
+                "오류",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
         }
     }
 
@@ -141,8 +143,9 @@ public partial class MainWindow : Window
         var source = e.OriginalSource as DependencyObject;
         while (source != null && source is not TreeViewItem)
             source = VisualTreeHelper.GetParent(source);
-        if (source is TreeViewItem tvi)
-            tvi.IsSelected = true;
+
+        if (source is TreeViewItem item)
+            item.IsSelected = true;
     }
 
     private void SearchBox_KeyDown(object sender, KeyEventArgs e)
@@ -151,96 +154,84 @@ public partial class MainWindow : Window
             _vm.SearchCommand.Execute(null);
     }
 
-    private void SearchResult_DoubleClick(object sender, MouseButtonEventArgs e)
+    private async void SearchResult_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not DataGrid grid) return;
-        if (grid.SelectedItem is not SearchResultViewModel result) return;
+        if (sender is not DataGrid grid || grid.SelectedItem is not SearchResultViewModel result)
+            return;
 
-        // 이전 하이라이트 초기화
-        foreach (var r in _vm.SearchResults)
-            if (r.Node != null) r.Node.IsHighlighted = false;
+        foreach (var entry in _vm.SearchResults)
+        {
+            if (entry.Node != null)
+                entry.Node.IsHighlighted = false;
+        }
 
-        // 탭 전환
         _vm.SelectedTab = result.Tab;
 
-        // 탭 전환 완료 후 경로 기반으로 트리 노드 탐색 및 이동
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
-        {
-            var node = FindNodeByPath(result.Tab, result.NodePath, out var ancestorPath);
-            if (node == null) return;
+        await Dispatcher.Yield(DispatcherPriority.Loaded);
 
-            result.Node = node;
-            result.AncestorPath = ancestorPath;
+        var (node, ancestorPath) = await FindNodeByPathAsync(result.Tab, result.NodePath);
+        if (node == null)
+            return;
 
-            // 조상 노드 펼치기
-            foreach (var ancestor in result.AncestorPath)
-                ancestor.IsExpanded = true;
+        result.Node = node;
+        result.AncestorPath = ancestorPath;
 
-            // 대상 노드 하이라이트
-            result.Node.IsHighlighted = true;
+        foreach (var ancestor in ancestorPath)
+            ancestor.IsExpanded = true;
 
-            // UI 업데이트 후 BringIntoView (가상화 대응: ancestorPath 전달)
-            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
-            {
-                BringNodeIntoView(result.Node, result.AncestorPath);
-            });
-        });
+        node.IsHighlighted = true;
+
+        await Dispatcher.Yield(DispatcherPriority.Loaded);
+        BringNodeIntoView(node, ancestorPath);
     }
 
-    /// <summary>
-    /// NodePath("m_abc.x") 문자열을 기반으로 트리를 순회하여 해당 TreeNodeViewModel을 찾는다.
-    /// Lazy 노드는 자동으로 ExpandLoad()를 호출한다.
-    /// </summary>
-    private static TreeNodeViewModel? FindNodeByPath(
-        ShmTabViewModel tab, string nodePath, out List<TreeNodeViewModel> ancestorPath)
+    private static async Task<(TreeNodeViewModel? node, List<TreeNodeViewModel> ancestorPath)> FindNodeByPathAsync(
+        ShmTabViewModel tab,
+        string nodePath)
     {
-        ancestorPath = new List<TreeNodeViewModel>();
-        if (tab.RootNodes.Count == 0) return null;
+        var ancestorPath = new List<TreeNodeViewModel>();
+        if (tab.RootNodes.Count == 0)
+            return (null, ancestorPath);
 
-        var root = tab.RootNodes[0];
-
+        var current = tab.RootNodes[0];
         if (string.IsNullOrEmpty(nodePath))
-            return root;
+            return (current, ancestorPath);
 
-        var parts = nodePath.Split('.');
-        var current = root;
-
-        foreach (var part in parts)
+        foreach (var part in nodePath.Split('.'))
         {
-            // Lazy 노드이면 먼저 펼쳐서 자식 생성
-            if (current.IsLazy)
-                current.ExpandLoad();
+            if (current.IsLazy || current.IsExpanding)
+                await tab.ExpandNodeAsync(current);
 
-            // "[n]" 같은 배열 플레이스홀더 처리: "[" 이전까지만 이름으로 사용
             var name = part.Contains('[') ? part[..part.IndexOf('[')] : part;
-            if (string.IsNullOrEmpty(name)) continue;
+            if (string.IsNullOrEmpty(name))
+                continue;
 
             var child = current.Children.FirstOrDefault(c => c.Name == name);
-            if (child == null) break; // 더 이상 내려갈 수 없으면 현재 노드 반환
+            if (child == null)
+                break;
 
             ancestorPath.Add(current);
             current = child;
         }
 
-        return current;
+        return (current, ancestorPath);
     }
 
     private void BringNodeIntoView(TreeNodeViewModel node, List<TreeNodeViewModel>? ancestorPath = null)
     {
-        // Find the active tab's TreeView by navigating through TabControl
         var tabControl = FindVisualChild<TabControl>(this);
-        if (tabControl?.SelectedItem is not ShmTabViewModel selectedTab) return;
+        if (tabControl?.SelectedItem is not ShmTabViewModel selectedTab)
+            return;
 
-        // Find the TabItem containing the selected tab
         var tabItem = tabControl.ItemContainerGenerator.ContainerFromItem(selectedTab) as TabItem;
-        if (tabItem == null) return;
+        if (tabItem == null)
+            return;
 
-        // Find TreeView within the selected tab's content
         var treeView = FindVisualChild<TreeView>(tabItem);
-        if (treeView == null) return;
+        if (treeView == null)
+            return;
 
-        // 가상화 대응: 조상 경로를 따라 순차적으로 컨테이너를 실현시킨다
-        if (ancestorPath != null && ancestorPath.Count > 0)
+        if (ancestorPath is { Count: > 0 })
         {
             var item = FindTreeViewItemWithVirtualization(treeView, node, ancestorPath);
             if (item != null)
@@ -250,25 +241,23 @@ public partial class MainWindow : Window
                     item.BringIntoView();
                 });
             }
+            return;
         }
-        else
+
+        var directItem = FindTreeViewItem(treeView, node);
+        if (directItem != null)
         {
-            var item = FindTreeViewItem(treeView, node);
-            if (item != null)
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
             {
-                Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
-                {
-                    item.BringIntoView();
-                });
-            }
+                directItem.BringIntoView();
+            });
         }
     }
 
-    /// <summary>
-    /// 가상화된 TreeView에서 조상 경로를 따라 컨테이너를 순차적으로 실현시키며 탐색한다.
-    /// </summary>
     private TreeViewItem? FindTreeViewItemWithVirtualization(
-        ItemsControl parent, TreeNodeViewModel target, List<TreeNodeViewModel> ancestorPath)
+        ItemsControl parent,
+        TreeNodeViewModel target,
+        List<TreeNodeViewModel> ancestorPath)
     {
         foreach (var ancestor in ancestorPath)
         {
@@ -276,37 +265,42 @@ public partial class MainWindow : Window
             var container = parent.ItemContainerGenerator.ContainerFromItem(ancestor) as TreeViewItem;
             if (container == null)
             {
-                // 가상화로 인해 컨테이너 없음 → VirtualizingPanel으로 강제 실현
                 var vsp = FindVisualChild<VirtualizingStackPanel>(parent);
                 if (vsp != null)
                 {
-                    int index = parent.Items.IndexOf(ancestor);
+                    var index = parent.Items.IndexOf(ancestor);
                     if (index >= 0)
                         vsp.BringIndexIntoViewPublic(index);
                 }
+
                 parent.UpdateLayout();
                 container = parent.ItemContainerGenerator.ContainerFromItem(ancestor) as TreeViewItem;
             }
-            if (container == null) return null;
+
+            if (container == null)
+                return null;
+
             container.IsExpanded = true;
             container.UpdateLayout();
             parent = container;
         }
-        // 마지막 타겟 아이템
+
         parent.UpdateLayout();
         var targetContainer = parent.ItemContainerGenerator.ContainerFromItem(target) as TreeViewItem;
         if (targetContainer == null)
         {
-            var vsp2 = FindVisualChild<VirtualizingStackPanel>(parent);
-            if (vsp2 != null)
+            var vsp = FindVisualChild<VirtualizingStackPanel>(parent);
+            if (vsp != null)
             {
-                int index = parent.Items.IndexOf(target);
+                var index = parent.Items.IndexOf(target);
                 if (index >= 0)
-                    vsp2.BringIndexIntoViewPublic(index);
+                    vsp.BringIndexIntoViewPublic(index);
             }
+
             parent.UpdateLayout();
             targetContainer = parent.ItemContainerGenerator.ContainerFromItem(target) as TreeViewItem;
         }
+
         return targetContainer;
     }
 
@@ -315,49 +309,54 @@ public partial class MainWindow : Window
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
         {
             var child = VisualTreeHelper.GetChild(parent, i);
-            if (child is T t) return t;
-            var result = FindVisualChild<T>(child);
-            if (result != null) return result;
+            if (child is T result)
+                return result;
+
+            var nested = FindVisualChild<T>(child);
+            if (nested != null)
+                return nested;
         }
+
         return null;
     }
 
     private static TreeViewItem? FindTreeViewItem(ItemsControl parent, object item)
     {
         var container = parent.ItemContainerGenerator.ContainerFromItem(item) as TreeViewItem;
-        if (container != null) return container;
+        if (container != null)
+            return container;
 
         for (int i = 0; i < parent.Items.Count; i++)
         {
             var child = parent.ItemContainerGenerator.ContainerFromIndex(i) as TreeViewItem;
-            if (child == null) continue;
+            if (child == null)
+                continue;
+
             var result = FindTreeViewItem(child, item);
-            if (result != null) return result;
+            if (result != null)
+                return result;
         }
+
         return null;
     }
 
     private async void TreeViewItem_Expanded(object sender, RoutedEventArgs e)
     {
-        if (e.OriginalSource is not TreeViewItem item) return;
-        if (item.DataContext is not TreeNodeViewModel node) return;
+        if (e.OriginalSource is not TreeViewItem item)
+            return;
 
-        // Trigger async lazy loading if this node is lazy
-        if (node.IsLazy)
-        {
-            await node.ExpandLoadAsync();
-        }
+        if (item.DataContext is not TreeNodeViewModel node || _vm.SelectedTab == null)
+            return;
+
+        if (node.IsLazy || node.IsExpanding)
+            await _vm.SelectedTab.ExpandNodeAsync(node);
     }
-
-    private Point _gridSplitterStart;
-    private double _col0WidthStart;
-    private double _col1WidthStart;
-    private double _col2WidthStart;
-    private GridSplitter? _currentSplitter;
 
     private void GridSplitter_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not GridSplitter splitter) return;
+        if (sender is not GridSplitter splitter)
+            return;
+
         _gridSplitterStart = e.GetPosition(this);
         _col0WidthStart = _vm.Col0Width;
         _col1WidthStart = _vm.Col1Width;
@@ -368,28 +367,24 @@ public partial class MainWindow : Window
 
     private void GridSplitter_PreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (_currentSplitter == null || e.LeftButton != MouseButtonState.Pressed) return;
+        if (_currentSplitter == null || e.LeftButton != MouseButtonState.Pressed)
+            return;
 
         var currentPos = e.GetPosition(this);
         var delta = currentPos.X - _gridSplitterStart.X;
 
         if (_currentSplitter.Name == "Splitter0")
         {
-            // Resize Col0 (SIZE +offset) and Col1 (TYPE)
-            var newCol0 = Math.Max(30, _col0WidthStart + delta);
-            _vm.Col0Width = newCol0;
+            _vm.Col0Width = Math.Max(30, _col0WidthStart + delta);
             _vm.Col1Width = Math.Max(100, _col1WidthStart - delta);
         }
         else if (_currentSplitter.Name == "Splitter1")
         {
-            // Resize Col1 (TYPE) and Col2 (NAME)
-            var newCol1 = Math.Max(100, _col1WidthStart + delta);
-            _vm.Col1Width = newCol1;
+            _vm.Col1Width = Math.Max(100, _col1WidthStart + delta);
             _vm.Col2Width = Math.Max(100, _col2WidthStart - delta);
         }
         else if (_currentSplitter.Name == "Splitter2")
         {
-            // Resize Col2 (NAME) - Col3 (VALUE) is * so it auto-adjusts
             _vm.Col2Width = Math.Max(100, _col2WidthStart + delta);
         }
     }

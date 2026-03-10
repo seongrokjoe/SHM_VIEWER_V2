@@ -23,9 +23,15 @@ public class DataMapper
             return;
         }
 
+        if (node.IsExpanding)
+            node.UpdatePendingData(data);
+
         if (node.Children.Count == 0)
         {
             // 리프 노드 — MemberInfo가 있으면 값 갱신 (dirty-check)
+            if (node.MemberInfo?.ResolvedType != null && !node.MemberInfo.IsPointer)
+                return;
+
             if (node.MemberInfo != null)
             {
                 var newVal = ReadValue(data, node.MemberInfo, node.Offset);

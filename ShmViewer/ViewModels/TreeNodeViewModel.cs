@@ -2,12 +2,14 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using ShmViewer.Core.Mapper;
 using ShmViewer.Core.Model;
 using System.Collections.ObjectModel;
-using System.Windows.Input;
+using System.Windows.Threading;
 
 namespace ShmViewer.ViewModels;
 
 public partial class TreeNodeViewModel : ObservableObject
 {
+    private const int ExpandBatchSize = 64;
+
     [ObservableProperty] private string _name = string.Empty;
     [ObservableProperty] private string _typeName = string.Empty;
     [ObservableProperty] private int _offset;
@@ -18,17 +20,20 @@ public partial class TreeNodeViewModel : ObservableObject
     [ObservableProperty] private bool _isHighlighted;
     [ObservableProperty] private bool _isLazy;
     [ObservableProperty] private int _level;
+    [ObservableProperty] private bool _isExpanding;
+    [ObservableProperty] private bool _isPlaceholder;
 
     public MemberInfo? MemberInfo { get; set; }
     public ObservableCollection<TreeNodeViewModel> Children { get; } = new();
 
-    // Lazy loading fields
     private List<(MemberInfo member, int baseOffset)>? _pendingMemberInfos;
     private byte[]? _pendingData;
     private DataMapper? _pendingMapper;
+    private Task? _expansionTask;
 
     public string OffsetDisplay => $"+{Offset}";
     public string SizeDisplay => $"{Size} (+{Offset})";
+    public int PendingChildCount => _pendingMemberInfos?.Count ?? 0;
 
     private bool _hasChildren;
     public bool HasChildren
@@ -39,13 +44,13 @@ public partial class TreeNodeViewModel : ObservableObject
 
     public TreeNodeViewModel()
     {
-        Children.CollectionChanged += (_, _) => HasChildren = Children.Count > 0;
+        Children.CollectionChanged += (_, _) => UpdateHasChildren();
+        UpdateHasChildren();
     }
 
-    /// <summary>
-    /// Set this node's level and recursively propagate to all existing children.
-    /// Lazy (unexpanded) children will get correct levels via ExpandLoad.
-    /// </summary>
+    partial void OnIsLazyChanged(bool value) => UpdateHasChildren();
+    partial void OnIsExpandingChanged(bool value) => UpdateHasChildren();
+
     public void SetLevelRecursive(int level)
     {
         Level = level;
@@ -53,118 +58,199 @@ public partial class TreeNodeViewModel : ObservableObject
             child.SetLevelRecursive(level + 1);
     }
 
-    /// <summary>
-    /// Set this node to lazy mode with a dummy child for expand arrow.
-    /// Call ExpandLoad() when expand is triggered.
-    /// </summary>
     public void SetLazy(List<(MemberInfo, int)> memberInfos, byte[] data, DataMapper mapper)
     {
         _pendingMemberInfos = memberInfos;
         _pendingData = data;
         _pendingMapper = mapper;
+
         IsLazy = true;
-        // Add dummy child to show expand arrow
-        Children.Add(new TreeNodeViewModel { Name = "Loading...", TypeName = "" });
+        IsExpanding = false;
+
+        Children.Clear();
+        Children.Add(new TreeNodeViewModel
+        {
+            Name = "Loading...",
+            TypeName = string.Empty,
+            IsPlaceholder = true
+        });
     }
 
-    /// <summary>
-    /// Refresh시 lazy 노드의 pending 데이터를 최신화한다 (아직 펼쳐지지 않은 경우).
-    /// </summary>
     public void UpdatePendingData(byte[] data)
     {
-        if (IsLazy)
+        if (IsLazy || IsExpanding)
             _pendingData = data;
     }
 
-    /// <summary>
-    /// Expand lazy node - remove dummy and build actual children.
-    /// </summary>
     public void ExpandLoad()
     {
-        if (!IsLazy || _pendingMemberInfos == null || _pendingData == null || _pendingMapper == null)
+        if (!TryGetPendingState(out var memberInfos, out var mapper))
             return;
 
-        // Remove dummy child
-        Children.Clear();
-
-        // Build actual children
-        int baseOffset = Offset;
-        foreach (var (member, memberBaseOffset) in _pendingMemberInfos)
-        {
-            TreeNodeViewModel child;
-            if (member.ArrayDims.Length > 1)
-                child = _pendingMapper.BuildMultiDimArrayNode(_pendingData, member, memberBaseOffset, 0, 0);
-            else if (member.ArrayCount > 1)
-                child = _pendingMapper.BuildArrayNode(_pendingData, member, memberBaseOffset);
-            else
-                child = _pendingMapper.BuildNode(_pendingData, member, memberBaseOffset);
-            child.SetLevelRecursive(Level + 1);
-            Children.Add(child);
-        }
-
-        // Clear pending data
-        _pendingMemberInfos = null;
-        _pendingData = null;
-        _pendingMapper = null;
-        IsLazy = false;
-    }
-
-    /// <summary>
-    /// 비동기 배치 확장 — UI 프리징 없이 대형 노드를 점진적으로 로드한다.
-    /// </summary>
-    public async Task ExpandLoadAsync()
-    {
-        if (!IsLazy || _pendingMemberInfos == null || _pendingData == null || _pendingMapper == null)
-            return;
-
-        // 재진입 방지: pending 상태 즉시 캡처 후 클리어
-        var mapper = _pendingMapper;
-        var data = _pendingData;
-        var memberInfos = _pendingMemberInfos;
-        _pendingMemberInfos = null;
-        _pendingData = null;
-        _pendingMapper = null;
-        IsLazy = false;
-
-        Children.Clear();
-        Mouse.OverrideCursor = Cursors.Wait;
+        BeginExpansion();
 
         try
         {
-            // 백그라운드 스레드에서 노드 빌드
-            var parentLevel = Level;
-            var nodes = await Task.Run(() =>
-            {
-                var result = new List<TreeNodeViewModel>();
-                foreach (var (member, baseOffset) in memberInfos)
-                {
-                    TreeNodeViewModel child;
-                    if (member.ArrayDims.Length > 1)
-                        child = mapper.BuildMultiDimArrayNode(data, member, baseOffset, 0, 0);
-                    else if (member.ArrayCount > 1)
-                        child = mapper.BuildArrayNode(data, member, baseOffset);
-                    else
-                        child = mapper.BuildNode(data, member, baseOffset);
-                    child.SetLevelRecursive(parentLevel + 1);
-                    result.Add(child);
-                }
-                return result;
-            });
+            Children.Clear();
 
-            // 배치로 UI에 추가 (UI 응답성 유지)
-            const int batchSize = 500;
-            for (int i = 0; i < nodes.Count; i += batchSize)
+            var nodes = BuildNodes(
+                memberInfos,
+                CloneLatestPendingData(),
+                mapper,
+                Level + 1);
+
+            foreach (var child in nodes)
+                Children.Add(child);
+
+            CompleteExpansion();
+        }
+        catch
+        {
+            RestoreLazyState(memberInfos, CloneLatestPendingData(), mapper);
+            throw;
+        }
+    }
+
+    public Task ExpandLoadAsync()
+    {
+        if (_expansionTask is { IsCompleted: false })
+            return _expansionTask;
+
+        if (!IsLazy)
+            return Task.CompletedTask;
+
+        _expansionTask = ExpandLoadCoreAsync();
+        return _expansionTask;
+    }
+
+    private async Task ExpandLoadCoreAsync()
+    {
+        if (!TryGetPendingState(out var memberInfos, out var mapper))
+            return;
+
+        BeginExpansion();
+
+        try
+        {
+            Children.Clear();
+
+            for (int i = 0; i < memberInfos.Count; i += ExpandBatchSize)
             {
-                var end = Math.Min(i + batchSize, nodes.Count);
-                for (int j = i; j < end; j++)
-                    Children.Add(nodes[j]);
-                if (end < nodes.Count)
-                    await Task.Delay(1); // UI 스레드 숨쉬기
+                var batch = memberInfos
+                    .Skip(i)
+                    .Take(Math.Min(ExpandBatchSize, memberInfos.Count - i))
+                    .ToList();
+
+                var batchSnapshot = CloneLatestPendingData();
+                var nodes = await Task.Run(() => BuildNodes(
+                    batch,
+                    batchSnapshot,
+                    mapper,
+                    Level + 1));
+
+                foreach (var child in nodes)
+                    Children.Add(child);
+
+                if (i + batch.Count < memberInfos.Count)
+                    await Dispatcher.Yield(DispatcherPriority.Background);
             }
+
+            CompleteExpansion();
+        }
+        catch
+        {
+            RestoreLazyState(memberInfos, CloneLatestPendingData(), mapper);
+            throw;
         }
         finally
         {
-            Mouse.OverrideCursor = null;
+            _expansionTask = null;
         }
+    }
+
+    private bool TryGetPendingState(
+        out List<(MemberInfo member, int baseOffset)> memberInfos,
+        out DataMapper mapper)
+    {
+        memberInfos = new List<(MemberInfo member, int baseOffset)>();
+        mapper = null!;
+
+        if (!IsLazy || _pendingMemberInfos == null || _pendingMapper == null)
+            return false;
+
+        memberInfos = _pendingMemberInfos;
+        mapper = _pendingMapper;
+        return true;
+    }
+
+    private void BeginExpansion()
+    {
+        IsLazy = false;
+        IsExpanding = true;
+    }
+
+    private void CompleteExpansion()
+    {
+        _pendingMemberInfos = null;
+        _pendingData = null;
+        _pendingMapper = null;
+        IsExpanding = false;
+    }
+
+    private void RestoreLazyState(
+        List<(MemberInfo member, int baseOffset)> memberInfos,
+        byte[] data,
+        DataMapper mapper)
+    {
+        _pendingMemberInfos = memberInfos;
+        _pendingData = data;
+        _pendingMapper = mapper;
+        IsExpanding = false;
+        IsLazy = true;
+
+        Children.Clear();
+        Children.Add(new TreeNodeViewModel
+        {
+            Name = "Loading...",
+            TypeName = string.Empty,
+            IsPlaceholder = true
+        });
+    }
+
+    private byte[] CloneLatestPendingData()
+    {
+        return _pendingData != null
+            ? (byte[])_pendingData.Clone()
+            : Array.Empty<byte>();
+    }
+
+    private static List<TreeNodeViewModel> BuildNodes(
+        IReadOnlyList<(MemberInfo member, int baseOffset)> memberInfos,
+        byte[] data,
+        DataMapper mapper,
+        int childLevel)
+    {
+        var result = new List<TreeNodeViewModel>(memberInfos.Count);
+
+        foreach (var (member, baseOffset) in memberInfos)
+        {
+            TreeNodeViewModel child;
+            if (member.ArrayDims.Length > 1)
+                child = mapper.BuildMultiDimArrayNode(data, member, baseOffset, 0, 0);
+            else if (member.ArrayCount > 1)
+                child = mapper.BuildArrayNode(data, member, baseOffset);
+            else
+                child = mapper.BuildNode(data, member, baseOffset);
+
+            child.SetLevelRecursive(childLevel);
+            result.Add(child);
+        }
+
+        return result;
+    }
+
+    private void UpdateHasChildren()
+    {
+        HasChildren = IsLazy || IsExpanding || Children.Count > 0;
     }
 }
