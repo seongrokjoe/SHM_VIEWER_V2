@@ -60,6 +60,65 @@ public sealed class SearchNavigationHelperTests
     }
 
     [Fact]
+    public async Task FindNodeByPathAsync_ExpandsEntireLazyAncestorChain()
+    {
+        const string header = """
+            typedef struct Leaf {
+                int value;
+            } Leaf;
+
+            typedef struct Branch {
+                Leaf leaf;
+            } Branch;
+
+            typedef struct Root {
+                Branch branch;
+            } Root;
+            """;
+
+        var result = ParseHeader(header);
+        var rootType = AssertType(result.Database, "Root");
+        var tab = CreateTab(result.Database, rootType);
+        tab.BuildTree();
+
+        var match = await SearchNavigationHelper.FindNodeByPathAsync(tab, "branch.leaf.value");
+
+        Assert.NotNull(match);
+        Assert.Equal("value", match!.Node.Name);
+        Assert.Equal(new[] { "Root", "branch", "leaf" }, match.AncestorPath.Select(node => node.Name).ToArray());
+        Assert.All(match.AncestorPath, node => Assert.False(node.IsLazy));
+    }
+
+    [Fact]
+    public async Task FindNodeByPathAsync_ResolvesPlaceholderArrayWithNestedStructMember()
+    {
+        const string header = """
+            typedef struct Nested {
+                int code;
+            } Nested;
+
+            typedef struct Item {
+                Nested nested;
+            } Item;
+
+            typedef struct Root {
+                Item items[2];
+            } Root;
+            """;
+
+        var result = ParseHeader(header);
+        var rootType = AssertType(result.Database, "Root");
+        var tab = CreateTab(result.Database, rootType);
+        tab.BuildTree();
+
+        var match = await SearchNavigationHelper.FindNodeByPathAsync(tab, "items[n].nested.code");
+
+        Assert.NotNull(match);
+        Assert.Equal("code", match!.Node.Name);
+        Assert.Equal(new[] { "Root", "items", "[0]", "nested" }, match.AncestorPath.Select(node => node.Name).ToArray());
+    }
+
+    [Fact]
     public async Task FindNodeByPathAsync_ReturnsNullForUnknownPath()
     {
         const string header = """

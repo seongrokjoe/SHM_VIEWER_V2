@@ -7,12 +7,13 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Threading;
 
 namespace ShmViewer;
 
 public partial class MainWindow : Window
 {
-    private const int SearchNavigationMaxAttempts = 6;
+    private const int SearchNavigationMaxAttempts = 10;
 
     private readonly MainViewModel _vm;
     private Point _gridSplitterStart;
@@ -20,6 +21,7 @@ public partial class MainWindow : Window
     private double _col1WidthStart;
     private double _col2WidthStart;
     private GridSplitter? _currentSplitter;
+    private int _searchNavigationRequestId;
 
     public MainWindow()
     {
@@ -238,7 +240,11 @@ public partial class MainWindow : Window
 
     private async void SearchResult_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not DataGrid grid || grid.SelectedItem is not SearchResultViewModel result)
+        if (sender is not DataGrid grid)
+            return;
+
+        var result = ResolveSearchResultFromDoubleClick(e) ?? grid.SelectedItem as SearchResultViewModel;
+        if (result == null)
             return;
 
         await NavigateToSearchResultAsync(result);
@@ -246,51 +252,72 @@ public partial class MainWindow : Window
 
     private async Task NavigateToSearchResultAsync(SearchResultViewModel result)
     {
-        foreach (var entry in _vm.SearchResults)
-        {
-            if (entry.Node != null)
-                entry.Node.IsHighlighted = false;
-        }
+        var requestId = Interlocked.Increment(ref _searchNavigationRequestId);
+
+        ClearSearchHighlights();
 
         _vm.SelectedTab = result.Tab;
 
-        var treeView = await WaitForSelectedTreeViewAsync();
-        if (treeView == null)
+        var treeView = await WaitForTreeViewAsync(result.Tab, requestId);
+        if (treeView == null || !IsCurrentSearchNavigation(requestId))
             return;
 
         var match = await SearchNavigationHelper.FindNodeByPathAsync(result.Tab, result.NodePath);
-        if (match == null)
+        if (match == null || !IsCurrentSearchNavigation(requestId))
             return;
 
         result.Node = match.Node;
         result.AncestorPath = match.AncestorPath;
 
-        foreach (var ancestor in match.AncestorPath)
-            ancestor.IsExpanded = true;
-
         match.Node.IsHighlighted = true;
 
-        await EnsureAncestorsExpandedAsync(match.AncestorPath);
-
-        var item = await RealizeTreeViewItemAsync(treeView, match.Node, match.AncestorPath);
-        if (item == null)
+        var item = await SelectAndScrollToNodeAsync(treeView, match, requestId);
+        if (item == null || !IsCurrentSearchNavigation(requestId))
+        {
+            match.Node.IsHighlighted = false;
             return;
+        }
 
         ApplySelectionToTreeViewItem(item, match.Node);
     }
 
-    private async Task<TreeView?> WaitForSelectedTreeViewAsync()
+    private static SearchResultViewModel? ResolveSearchResultFromDoubleClick(MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject source)
+            return null;
+
+        var row = FindAncestor<DataGridRow>(source);
+        return row?.Item as SearchResultViewModel;
+    }
+
+    private void ClearSearchHighlights()
+    {
+        foreach (var entry in _vm.SearchResults)
+        {
+            if (entry.Node != null)
+                entry.Node.IsHighlighted = false;
+        }
+    }
+
+    private bool IsCurrentSearchNavigation(int requestId) =>
+        requestId == Volatile.Read(ref _searchNavigationRequestId);
+
+    private async Task<TreeView?> WaitForTreeViewAsync(ShmTabViewModel tab, int requestId)
     {
         for (int attempt = 0; attempt < SearchNavigationMaxAttempts; attempt++)
         {
-            var treeView = FindSelectedTreeView();
-            if (treeView != null)
+            if (!IsCurrentSearchNavigation(requestId))
+                return null;
+
+            var treeView = FindTreeViewForTab(tab);
+            if (treeView != null && treeView.IsLoaded)
             {
+                treeView.ApplyTemplate();
                 treeView.UpdateLayout();
                 return treeView;
             }
 
-            await Dispatcher.Yield(attempt == 0
+            await Dispatcher.InvokeAsync(() => { }, attempt == 0
                 ? DispatcherPriority.Loaded
                 : DispatcherPriority.Background);
         }
@@ -298,32 +325,99 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private async Task EnsureAncestorsExpandedAsync(List<TreeNodeViewModel> ancestorPath)
+    private async Task<TreeViewItem?> SelectAndScrollToNodeAsync(
+        TreeView treeView,
+        SearchNodeMatch match,
+        int requestId)
     {
-        if (ancestorPath.Count == 0)
-            return;
+        var parent = await ExpandAncestorChainAsync(treeView, match.AncestorPath, requestId);
+        if (parent == null || !IsCurrentSearchNavigation(requestId))
+            return null;
 
-        foreach (var ancestor in ancestorPath)
-            ancestor.IsExpanded = true;
+        var item = await WaitForContainerAsync(parent, match.Node, requestId);
+        if (item == null || !IsCurrentSearchNavigation(requestId))
+            return null;
 
-        for (int attempt = 0; attempt < 2; attempt++)
-            await Dispatcher.Yield(DispatcherPriority.Background);
+        await Dispatcher.InvokeAsync(() =>
+        {
+            item.UpdateLayout();
+            item.BringIntoView();
+            EnsureTreeItemVisible(treeView, item);
+        }, DispatcherPriority.Background);
+
+        return item;
     }
 
-    private async Task<TreeViewItem?> RealizeTreeViewItemAsync(
+    private async Task<ItemsControl?> ExpandAncestorChainAsync(
         TreeView treeView,
-        TreeNodeViewModel node,
-        List<TreeNodeViewModel>? ancestorPath)
+        IReadOnlyList<TreeNodeViewModel> ancestorPath,
+        int requestId)
+    {
+        ItemsControl parent = treeView;
+
+        foreach (var ancestor in ancestorPath)
+        {
+            if (!IsCurrentSearchNavigation(requestId))
+                return null;
+
+            ancestor.IsExpanded = true;
+
+            var container = await WaitForContainerAsync(parent, ancestor, requestId);
+            if (container == null)
+                return null;
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                container.IsExpanded = true;
+                container.ApplyTemplate();
+                container.UpdateLayout();
+            }, DispatcherPriority.Loaded);
+
+            parent = container;
+        }
+
+        return parent;
+    }
+
+    private async Task<TreeViewItem?> WaitForContainerAsync(
+        ItemsControl parent,
+        object item,
+        int requestId)
     {
         for (int attempt = 0; attempt < SearchNavigationMaxAttempts; attempt++)
         {
-            treeView.UpdateLayout();
+            if (!IsCurrentSearchNavigation(requestId))
+                return null;
 
-            var item = FindRealizedTreeViewItem(treeView, node, ancestorPath);
-            if (item != null)
-                return item;
+            parent.ApplyTemplate();
+            parent.UpdateLayout();
 
-            await Dispatcher.Yield(attempt == 0
+            var container = parent.ItemContainerGenerator.ContainerFromItem(item) as TreeViewItem;
+            if (container != null)
+            {
+                container.ApplyTemplate();
+                container.UpdateLayout();
+                return container;
+            }
+
+            TryBringItemContainerIntoView(parent, item);
+
+            container = parent.ItemContainerGenerator.ContainerFromItem(item) as TreeViewItem;
+            if (container != null)
+            {
+                container.ApplyTemplate();
+                container.UpdateLayout();
+                return container;
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (parent is TreeViewItem parentItem && !parentItem.IsExpanded)
+                    parentItem.IsExpanded = true;
+
+                parent.ApplyTemplate();
+                parent.UpdateLayout();
+            }, attempt == 0
                 ? DispatcherPriority.Loaded
                 : DispatcherPriority.Background);
         }
@@ -331,33 +425,40 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private TreeView? FindSelectedTreeView()
+    private TreeView? FindTreeViewForTab(ShmTabViewModel tab)
     {
         var tabControl = FindVisualChild<TabControl>(this);
-        if (tabControl?.SelectedItem is not ShmTabViewModel selectedTab)
+        if (tabControl == null)
             return null;
 
+        if (!ReferenceEquals(tabControl.SelectedItem, tab))
+            tabControl.SelectedItem = tab;
+
+        tabControl.ApplyTemplate();
         tabControl.UpdateLayout();
 
-        var tabItem = tabControl.ItemContainerGenerator.ContainerFromItem(selectedTab) as TabItem;
+        var tabItem = tabControl.ItemContainerGenerator.ContainerFromItem(tab) as TabItem;
         if (tabItem == null)
             return null;
 
+        if (!tabItem.IsSelected)
+            tabItem.IsSelected = true;
+
+        tabItem.ApplyTemplate();
         tabItem.UpdateLayout();
         return FindVisualChild<TreeView>(tabItem);
     }
 
-    private TreeViewItem? FindRealizedTreeViewItem(
-        TreeView treeView,
-        TreeNodeViewModel node,
-        List<TreeNodeViewModel>? ancestorPath)
+    private void TryBringItemContainerIntoView(ItemsControl parent, object item)
     {
-        if (ancestorPath is { Count: > 0 })
-        {
-            return FindTreeViewItemWithVirtualization(treeView, node, ancestorPath);
-        }
+        var index = parent.Items.IndexOf(item);
+        if (index < 0)
+            return;
 
-        return FindTreeViewItem(treeView, node);
+        if (FindVisualChild<VirtualizingStackPanel>(parent) is { } vsp)
+            vsp.BringIndexIntoViewPublic(index);
+
+        parent.UpdateLayout();
     }
 
     private static void ApplySelectionToTreeViewItem(TreeViewItem item, TreeNodeViewModel node)
@@ -370,54 +471,38 @@ public partial class MainWindow : Window
         node.IsHighlighted = false;
     }
 
-    private TreeViewItem? FindTreeViewItemWithVirtualization(
-        ItemsControl parent,
-        TreeNodeViewModel target,
-        List<TreeNodeViewModel> ancestorPath)
+    private static void EnsureTreeItemVisible(TreeView treeView, TreeViewItem item)
     {
-        foreach (var ancestor in ancestorPath)
+        var scrollViewer = FindVisualChild<ScrollViewer>(treeView);
+        if (scrollViewer == null)
         {
-            parent.UpdateLayout();
-            var container = parent.ItemContainerGenerator.ContainerFromItem(ancestor) as TreeViewItem;
-            if (container == null)
-            {
-                var vsp = FindVisualChild<VirtualizingStackPanel>(parent);
-                if (vsp != null)
-                {
-                    var index = parent.Items.IndexOf(ancestor);
-                    if (index >= 0)
-                        vsp.BringIndexIntoViewPublic(index);
-                }
-
-                parent.UpdateLayout();
-                container = parent.ItemContainerGenerator.ContainerFromItem(ancestor) as TreeViewItem;
-            }
-
-            if (container == null)
-                return null;
-
-            container.IsExpanded = true;
-            container.UpdateLayout();
-            parent = container;
+            item.BringIntoView();
+            return;
         }
 
-        parent.UpdateLayout();
-        var targetContainer = parent.ItemContainerGenerator.ContainerFromItem(target) as TreeViewItem;
-        if (targetContainer == null)
+        item.BringIntoView();
+
+        if (item.ActualHeight <= 0)
+            return;
+
+        try
         {
-            var vsp = FindVisualChild<VirtualizingStackPanel>(parent);
-            if (vsp != null)
+            var bounds = item.TransformToAncestor(scrollViewer)
+                .TransformBounds(new Rect(new Point(0, 0), item.RenderSize));
+
+            if (bounds.Top < 0)
             {
-                var index = parent.Items.IndexOf(target);
-                if (index >= 0)
-                    vsp.BringIndexIntoViewPublic(index);
+                scrollViewer.ScrollToVerticalOffset(Math.Max(0, scrollViewer.VerticalOffset + bounds.Top - item.ActualHeight));
             }
-
-            parent.UpdateLayout();
-            targetContainer = parent.ItemContainerGenerator.ContainerFromItem(target) as TreeViewItem;
+            else if (bounds.Bottom > scrollViewer.ViewportHeight)
+            {
+                scrollViewer.ScrollToVerticalOffset(scrollViewer.VerticalOffset + (bounds.Bottom - scrollViewer.ViewportHeight) + item.ActualHeight);
+            }
         }
-
-        return targetContainer;
+        catch (InvalidOperationException)
+        {
+            item.BringIntoView();
+        }
     }
 
     private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
@@ -431,26 +516,6 @@ public partial class MainWindow : Window
             var nested = FindVisualChild<T>(child);
             if (nested != null)
                 return nested;
-        }
-
-        return null;
-    }
-
-    private static TreeViewItem? FindTreeViewItem(ItemsControl parent, object item)
-    {
-        var container = parent.ItemContainerGenerator.ContainerFromItem(item) as TreeViewItem;
-        if (container != null)
-            return container;
-
-        for (int i = 0; i < parent.Items.Count; i++)
-        {
-            var child = parent.ItemContainerGenerator.ContainerFromIndex(i) as TreeViewItem;
-            if (child == null)
-                continue;
-
-            var result = FindTreeViewItem(child, item);
-            if (result != null)
-                return result;
         }
 
         return null;
