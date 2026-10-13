@@ -43,4 +43,7 @@
           Condition="Exists('$(PublishDir)runtimes\win-x64\native\')" />
   </Target>
 
+  <ItemGroup>
+    <EmbeddedResource Include="SctcPreset.json" />
+  </ItemGroup>
 </Project>

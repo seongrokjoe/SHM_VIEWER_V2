@@ -92,3 +92,10 @@ public class LevelToMarginConverter : IValueConverter
         value is int level ? new Thickness(level * 16, 0, 0, 0) : new Thickness(0);
     public object ConvertBack(object v, Type t, object p, CultureInfo c) => throw new NotImplementedException();
 }
+
+public sealed class InverseBoolToVisConverter : IValueConverter
+{
+    public static readonly InverseBoolToVisConverter Instance = new();
+    public object Convert(object value, Type type, object parameter, CultureInfo culture) => value is true ? Visibility.Collapsed : Visibility.Visible;
+    public object ConvertBack(object value, Type type, object parameter, CultureInfo culture) => throw new NotSupportedException();
+}

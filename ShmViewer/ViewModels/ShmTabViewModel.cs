@@ -23,6 +23,8 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     private TypeInfo? _rootType;
     private DataMapper? _mapper;
     private int _refreshing;
+    private int _lifetimeVersion;
+    private bool _disposed;
 
     [ObservableProperty] private string _tabTitle = "New SHM";
     [ObservableProperty] private string _shmName = string.Empty;
@@ -53,7 +55,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _isInputBlocked;
     [ObservableProperty] private string _busyMessage = string.Empty;
 
-    public bool CanRun => IsTreeBuilt && !IsRunning;
+    public bool CanRun => !_disposed && IsTreeBuilt && !IsRunning;
 
     public ObservableCollection<TreeNodeViewModel> RootNodes { get; } = new();
     public List<TreeNodeViewModel> FlatNodes { get; private set; } = new();
@@ -130,11 +132,15 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         if (!EnsureTreeReady())
             return;
 
+        if (_disposed) return;
+        var version = _lifetimeVersion;
+        var size = _rootType.TotalSize;
         SetBusy("SHM 연결 중...");
 
         try
         {
-            var data = await Task.Run(() => _reader.ReadSnapshot(ShmName, _rootType.TotalSize));
+            var data = await Task.Run(() => _reader.ReadSnapshot(ShmName, size));
+            if (_disposed || version != _lifetimeVersion) return;
 
             ApplySnapshot(data);
 
@@ -147,23 +153,27 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         }
         catch (ShmNotFoundException ex)
         {
+            if (_disposed || version != _lifetimeVersion) return;
             IsStatusError = true;
             StatusText = ex.Message;
         }
         catch (Exception ex)
         {
+            if (_disposed || version != _lifetimeVersion) return;
             IsStatusError = true;
             StatusText = $"실행 실패: {ex.Message}";
         }
         finally
         {
-            ClearBusy();
+            if (!_disposed && version == _lifetimeVersion) ClearBusy();
         }
     }
 
     [RelayCommand]
     public void Stop()
     {
+        ++_lifetimeVersion;
+        ClearBusy();
         StopTimer();
         IsRunning = false;
         IsLoaded = false;
@@ -174,6 +184,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     [RelayCommand]
     public void Unload()
     {
+        ++_lifetimeVersion;
         StopTimer();
         ClearBusy();
 
@@ -182,6 +193,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         IsTreeBuilt = false;
         RootNodes.Clear();
         FlatNodes.Clear();
+        SearchIndex.Clear();
         StatusText = "언로드됨";
     }
 
@@ -223,7 +235,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
     internal void ApplySnapshot(byte[] data)
     {
-        if (_mapper == null || RootNodes.Count == 0)
+        if (_disposed || _mapper == null || RootNodes.Count == 0)
             return;
 
         _mapper.RefreshValues(RootNodes[0], data);
@@ -240,7 +252,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
     private void Refresh()
     {
-        if (!IsRunning || _rootType == null || _mapper == null)
+        if (_disposed || !IsRunning || _rootType == null || _mapper == null)
             return;
 
         if (!IsActiveTab && !IsManualMode)
@@ -249,16 +261,18 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         if (Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0)
             return;
 
+        var version = _lifetimeVersion;
         try
         {
             var data = _reader.ReadSnapshot(ShmName, _rootType.TotalSize);
 
             if (Application.Current?.Dispatcher is { } dispatcher)
             {
-                dispatcher.Invoke(() => ApplySnapshot(data));
+                dispatcher.Invoke(() => { if (!_disposed && version == _lifetimeVersion) ApplySnapshot(data); });
             }
             else
             {
+                if (_disposed || version != _lifetimeVersion) return;
                 ApplySnapshot(data);
             }
         }
@@ -387,5 +401,14 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         IsInputBlocked = false;
     }
 
-    public void Dispose() => StopTimer();
+    public void SetUnavailable(string reason)
+    {
+        Unload(); _db = null; _rootType = null; _mapper = null;
+        IsStatusError = true; StatusText = reason;
+    }
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true; Unload(); OnPropertyChanged(nameof(CanRun));
+    }
 }

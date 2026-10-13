@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:ShmViewer.ViewModels"
         xmlns:local="clr-namespace:ShmViewer"
-        Title="SHM Viewer" Height="750" Width="1100"
+        xmlns:views="clr-namespace:ShmViewer.Views"
+        Title="SHM Viewer" Height="900" Width="1440" MinHeight="650" MinWidth="1000"
         Background="#1E1E1E"
         Drop="Window_Drop" AllowDrop="True"
         DragOver="Window_DragOver">
@@ -78,6 +79,14 @@
         </Style>
     </Window.Resources>
 
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#252526" Padding="12,9" BorderBrush="#444" BorderThickness="0,0,0,1">
+            <CheckBox Content="Use Default SCTC Clean" Foreground="#E0E0E0" FontWeight="Bold"
+                      IsChecked="{Binding UseDefaultSctcClean, Mode=OneWay}" Click="DefaultPreset_Click"
+                      ToolTip="RealTime Viewer의 기본 헤더와 SHM 탭 설정"/>
+        </Border>
+        <TabControl x:Name="WorkspaceTabs" Background="#1E1E1E" BorderBrush="#444">
+            <TabItem Header="RealTime Viewer">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -131,38 +140,42 @@
                     </StackPanel>
                 </Grid>
 
-                <ItemsControl Grid.Row="1" ItemsSource="{Binding HeaderFiles, Mode=OneWay}" Margin="0,6,0,0">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <WrapPanel/>
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Background="#2D2D2D" BorderBrush="#555" BorderThickness="1"
-                                    Margin="0,0,6,4" Padding="6,3">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="📄 " FontSize="11"/>
-                                    <TextBlock Text="{Binding Converter={x:Static local:FileNameConverter.Instance}}"
-                                               FontSize="11" Foreground="#DCDCAA"/>
-                                    <Button Content="✕" Background="Transparent" Foreground="#888"
-                                            BorderThickness="0" Padding="4,0,0,0" FontSize="10"
-                                            Cursor="Hand" Margin="4,0,0,0"
-                                            Command="{Binding DataContext.RemoveHeaderFileCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                            CommandParameter="{Binding}"/>
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                <ScrollViewer Grid.Row="1" MaxHeight="120" VerticalScrollBarVisibility="Auto" Margin="0,6,0,0">
+                    <ItemsControl ItemsSource="{Binding HeaderGroups}">
+                        <ItemsControl.ItemTemplate><DataTemplate>
+                            <StackPanel Margin="0,0,0,4">
+                                <TextBlock Text="{Binding Directory}" Foreground="#9CDCFE" FontSize="11"/>
+                                <ItemsControl ItemsSource="{Binding Files}">
+                                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate><DataTemplate>
+                                        <Border Background="#2D2D2D" BorderBrush="#555" BorderThickness="1" Margin="0,3,6,0" Padding="6,3" ToolTip="{Binding Path}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock>
+                                                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Foreground" Value="#DCDCAA"/><Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsAvailable}" Value="False"><Setter Property="Foreground" Value="#FF7777"/></DataTrigger>
+                                                    </Style.Triggers></Style></TextBlock.Style>
+                                                    <Run Text="{Binding Name, Mode=OneWay}"/><Run Text=" "/><Run Text="{Binding Error, Mode=OneWay}"/>
+                                                </TextBlock>
+                                                <Button Content="✕" Background="Transparent" Foreground="#888" BorderThickness="0" Margin="6,0,0,0"
+                                                        Command="{Binding DataContext.RemoveHeaderFileCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate></ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </DataTemplate></ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
             </Grid>
         </Border>
 
         <!-- Parser Status + 미발견 타입 보기 버튼 -->
         <Border Grid.Row="1" Background="#1E1E1E" Padding="10,4" BorderBrush="#444" BorderThickness="0,0,0,1">
             <Grid>
-                <TextBlock Text="{Binding ParserStatus}" Foreground="#608B4E" FontSize="11"
+                <StackPanel HorizontalAlignment="Left"><TextBlock Text="{Binding ParserStatus}" Foreground="#608B4E" FontSize="11"
                            HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding SettingsError}" Foreground="#FF7777" FontSize="11"/>
+                </StackPanel>
                 <Button Content="미발견 타입 보기" Style="{StaticResource DarkBtn}" HorizontalAlignment="Right"
                         Command="{Binding ShowLastFailCommand}"
                         Visibility="{Binding HasLastUnresolved, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
@@ -196,7 +209,7 @@
         </Border>
 
         <!-- ═══ Tab Area ═══ -->
-        <TabControl Grid.Row="3" Background="#1E1E1E" BorderBrush="#444"
+        <TabControl x:Name="ShmTabControl" Grid.Row="3" Background="#1E1E1E" BorderBrush="#444"
                     ItemsSource="{Binding Tabs, Mode=OneWay}"
                     SelectedItem="{Binding SelectedTab}">
             <TabControl.ItemTemplate>
@@ -506,4 +519,10 @@
             </Grid>
         </Border>
     </Grid>
+            </TabItem>
+            <TabItem Header="DAT Diff">
+                <views:DatDiffView DataContext="{Binding DatDiff}"/>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
 </Window>

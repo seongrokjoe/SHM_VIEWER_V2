@@ -6,329 +6,244 @@ using ShmViewer.Core.Model;
 using ShmViewer.Core.Parser;
 using ShmViewer.Views.Dialogs;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.IO;
 using System.Windows;
-using System.Windows.Threading;
 
 namespace ShmViewer.ViewModels;
 
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ObservableObject, IDisposable
 {
+    private readonly IRealTimeSettingsStore _settings;
+    private readonly Func<string, bool> _confirm;
     private TypeDatabase? _currentDb;
-
-    [ObservableProperty] private ObservableCollection<string> _headerFiles = new();
-
-    // CanRefreshHeaders: true when no tab is running
-    public bool CanRefreshHeaders =>!Tabs.Any(t => t.IsRunning);
-    [ObservableProperty] private ObservableCollection<ShmTabViewModel> _tabs = new();
-    [ObservableProperty] private ShmTabViewModel? _selectedTab;
-    [ObservableProperty] private string _parserStatus = "헤더 파일을 업로드하세요.";
-
-    partial void OnSelectedTabChanged(ShmTabViewModel? value)
-    {
-        // Update IsActiveTab for all tabs
-        foreach (var tab in Tabs)
-        {
-            tab.IsActiveTab = (tab == value);
-        }
-    }
-
-    // ─── 미발견 타입 재확인 ───
+    private int _parseVersion;
+    private bool _disposed;
+    private bool _changingSettings;
     private List<string> _lastUnresolvedTypes = new();
+    public DatDiffViewModel DatDiff { get; }
+    public Task Initialization { get; private set; } = Task.CompletedTask;
+    public ObservableCollection<HeaderFileEntry> HeaderFiles { get; } = new();
+    public IEnumerable<HeaderFileGroup> HeaderGroups => HeaderFiles.GroupBy(f => f.Directory, StringComparer.OrdinalIgnoreCase)
+        .Select(g => new HeaderFileGroup(g.Key, g));
+    public ObservableCollection<ShmTabViewModel> Tabs { get; } = new();
+    public bool CanRefreshHeaders => !Tabs.Any(t => t.IsRunning || t.IsBusy) && !IsParsing;
+    [ObservableProperty] private bool _isParsing;
+    [ObservableProperty] private bool _useDefaultSctcClean;
+    [ObservableProperty] private ShmTabViewModel? _selectedTab;
+    [ObservableProperty] private string _settingsError = string.Empty;
+    [ObservableProperty] private string _parserStatus = "헤더 파일을 업로드하세요.";
     [ObservableProperty] private bool _hasLastUnresolved;
-
-    // ─── New Tab input fields ───
     [ObservableProperty] private string _newShmName = string.Empty;
     [ObservableProperty] private string _newStructName = string.Empty;
     [ObservableProperty] private RefreshMode _newRefreshMode = RefreshMode.Ms500;
-
-    // ─── 컬럼 너비 (그리드스플리터용) ───
-    [ObservableProperty] private double _col0Width = 90;   // SIZE +offset
-    [ObservableProperty] private double _col1Width = 160;  // TYPE
-    [ObservableProperty] private double _col2Width = 240;  // NAME
-    // Col3 (VALUE)는 * (나머지)
-
-    // ─── 검색 ───
+    [ObservableProperty] private double _col0Width = 90;
+    [ObservableProperty] private double _col1Width = 160;
+    [ObservableProperty] private double _col2Width = 240;
     [ObservableProperty] private string _searchText = string.Empty;
     [ObservableProperty] private ObservableCollection<SearchResultViewModel> _searchResults = new();
     [ObservableProperty] private bool _isSearchExpanded;
     [ObservableProperty] private ObservableCollection<string> _searchScopeItems = new();
     [ObservableProperty] private string _selectedSearchScope = "전체 탭";
 
+    public MainViewModel(IRealTimeSettingsStore? settings = null, Func<string, bool>? confirm = null, DatDiffViewModel? datDiff = null)
+    {
+        DatDiff = datDiff ?? new();
+        _settings = settings ?? new RealTimeSettingsStorage();
+        _confirm = confirm ?? (message => MessageBox.Show(message, "RealTime Viewer 초기화", MessageBoxButton.YesNo,
+            MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes);
+        HeaderFiles.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HeaderGroups));
+        Tabs.CollectionChanged += (_, e) =>
+        {
+            if (e.OldItems != null) foreach (ShmTabViewModel tab in e.OldItems) tab.PropertyChanged -= TabChanged;
+            if (e.NewItems != null) foreach (ShmTabViewModel tab in e.NewItems) tab.PropertyChanged += TabChanged;
+            NotifyHeaderCommands();
+            UpdateSearchScopeItems();
+        };
+        UpdateSearchScopeItems();
+        try
+        {
+            var saved = _settings.Load();
+            UseDefaultSctcClean = saved.UseDefaultSctcClean;
+            foreach (var path in saved.Headers.Distinct(StringComparer.OrdinalIgnoreCase)) HeaderFiles.Add(new(path));
+            foreach (var entry in saved.Tabs) AddPendingTab(entry);
+            Initialization = ParseHeadersAsync();
+        }
+        catch (Exception ex) { ParserStatus = "설정 복원 실패: " + ex.Message; }
+    }
+
+    partial void OnIsParsingChanged(bool value) => NotifyHeaderCommands();
+    partial void OnSelectedTabChanged(ShmTabViewModel? value)
+    {
+        foreach (var tab in Tabs) tab.IsActiveTab = tab == value;
+    }
+    private void NotifyHeaderCommands()
+    {
+        OnPropertyChanged(nameof(CanRefreshHeaders));
+        RefreshHeadersCommand.NotifyCanExecuteChanged();
+        AddHeaderFilesCommand.NotifyCanExecuteChanged();
+        ClearAllHeaderFilesCommand.NotifyCanExecuteChanged();
+        RemoveHeaderFileCommand.NotifyCanExecuteChanged();
+    }
+    private void TabChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ShmTabViewModel.IsRunning) or nameof(ShmTabViewModel.IsBusy)) NotifyHeaderCommands();
+        if (e.PropertyName == nameof(ShmTabViewModel.RefreshMode)) SaveSettings();
+    }
     private void UpdateSearchScopeItems()
     {
         SearchScopeItems.Clear();
         SearchScopeItems.Add("전체 탭");
-        foreach (var tab in Tabs)
+        foreach (var tab in Tabs) SearchScopeItems.Add(tab.TabTitle);
+        if (!SearchScopeItems.Contains(SelectedSearchScope)) SelectedSearchScope = "전체 탭";
+    }
+
+    public bool SetDefaultPreset(bool enabled)
+    {
+        if (enabled == UseDefaultSctcClean) return true;
+        if ((!enabled || HeaderFiles.Count > 0 || Tabs.Count > 0) && !_confirm(enabled
+            ? "RealTime Viewer의 모든 헤더, SHM 탭, 검색 및 화면 설정을 초기화하고 SCTC 기본 설정으로 교체합니다. 실행 중인 SHM도 중지됩니다. 계속하시겠습니까?"
+            : "RealTime Viewer의 모든 설정이 초기화되고 실행 중인 SHM이 중지됩니다. DAT Diff 작업은 유지됩니다. 초기화하시겠습니까?")) return false;
+        _changingSettings = true;
+        try
         {
-            SearchScopeItems.Add(tab.TabTitle);
+            ResetRealTime();
+            UseDefaultSctcClean = enabled;
+            if (enabled)
+            {
+                var preset = SctcPreset.Load();
+                foreach (var group in preset.HeaderGroups)
+                    foreach (var file in group.Files) HeaderFiles.Add(new(Path.Combine(group.Directory, file)));
+                foreach (var tab in preset.Tabs) AddPendingTab(tab);
+                NewRefreshMode = RefreshMode.Ms1000;
+            }
         }
-        // Reset to "전체 탭" if current selection is invalid
-        if (!SearchScopeItems.Contains(SelectedSearchScope))
-            SelectedSearchScope = "전체 탭";
+        finally { _changingSettings = false; }
+        SaveSettings();
+        Initialization = ParseHeadersAsync();
+        return true;
     }
-
-    public MainViewModel()
+    private void ResetRealTime()
     {
-        // OnTabsChanged is never called because _tabs is field-initialized (setter is never invoked).
-        // Bootstrap SearchScopeItems and CollectionChanged subscription here directly.
-        UpdateSearchScopeItems();
-        Tabs.CollectionChanged += (s, e) =>
-        {
-            OnPropertyChanged(nameof(CanRefreshHeaders));
-            UpdateSearchScopeItems();
-            if (e.NewItems != null)
-                foreach (ShmTabViewModel newTab in e.NewItems)
-                    newTab.PropertyChanged += (_, _) => OnPropertyChanged(nameof(CanRefreshHeaders));
-        };
-
-        var saved = HeaderPathsStorage.Load();
-        if (saved.Count > 0)
-        {
-            foreach (var file in saved)
-                HeaderFiles.Add(file);
-            ParseHeaders();
-        }
-    }
-
-    [RelayCommand]
-    private void AddHeaderFiles()
-    {
-        var dlg = new OpenFileDialog
-        {
-            Filter = "C/C++ Header Files (*.h)|*.h|All Files (*.*)|*.*",
-            Multiselect = true,
-            Title = "헤더 파일 선택"
-        };
-
-        if (dlg.ShowDialog() != true) return;
-
-        foreach (var file in dlg.FileNames)
-            if (!HeaderFiles.Contains(file))
-                HeaderFiles.Add(file);
-
-        HeaderPathsStorage.Save(HeaderFiles);
-        ParseHeaders();
-    }
-
-    public void AddHeaderFiles(IEnumerable<string> paths)
-    {
-        foreach (var file in paths)
-            if (!HeaderFiles.Contains(file))
-                HeaderFiles.Add(file);
-
-        HeaderPathsStorage.Save(HeaderFiles);
-        ParseHeaders();
-    }
-
-    [RelayCommand]
-    private void RemoveHeaderFile(string file)
-    {
-        HeaderFiles.Remove(file);
-        HeaderPathsStorage.Save(HeaderFiles);
-        if (HeaderFiles.Count > 0) ParseHeaders();
-        else
-        {
-            _currentDb = null;
-            ParserStatus = "헤더 파일을 업로드하세요.";
-        }
-    }
-
-    [RelayCommand]
-    private void ClearAllHeaderFiles()
-    {
-        HeaderFiles.Clear();
-        HeaderPathsStorage.Save(HeaderFiles);
-        _currentDb = null;
+        ++_parseVersion;
+        IsParsing = false;
+        foreach (var tab in Tabs) { tab.PropertyChanged -= TabChanged; tab.Dispose(); }
+        Tabs.Clear(); SelectedTab = null; HeaderFiles.Clear(); _currentDb = null;
+        CloseSearch(); _lastUnresolvedTypes.Clear(); HasLastUnresolved = false;
+        NewShmName = NewStructName = string.Empty; NewRefreshMode = RefreshMode.Ms500;
+        Col0Width = 90; Col1Width = 160; Col2Width = 240;
         ParserStatus = "헤더 파일을 업로드하세요.";
     }
-
-    [RelayCommand(CanExecute = nameof(CanRefreshHeaders))]
-    private void RefreshHeaders()
+    private void AddPendingTab(ShmTabEntry entry)
     {
-        if (HeaderFiles.Count > 0)
-            ParseHeaders();
+        if (Tabs.Any(t => t.ShmName == entry.ShmName && t.StructName == entry.StructName)) return;
+        var tab = new ShmTabViewModel
+        {
+            ShmName = entry.ShmName, StructName = entry.StructName, TabTitle = entry.ShmName,
+            RefreshMode = Enum.TryParse<RefreshMode>(entry.RefreshMode, out var mode) ? mode : RefreshMode.Ms500,
+            IsStatusError = true, StatusText = "헤더 / 구조체 확인 대기"
+        };
+        Tabs.Add(tab);
+        SelectedTab ??= tab;
     }
-
+    [RelayCommand(CanExecute = nameof(CanRefreshHeaders))]
+    private void AddHeaderFiles()
+    {
+        var dlg = new OpenFileDialog { Filter = "C/C++ Headers|*.h;*.hpp|All Files|*.*", Multiselect = true };
+        if (dlg.ShowDialog() == true) AddHeaderFiles(dlg.FileNames);
+    }
+    public void AddHeaderFiles(IEnumerable<string> paths)
+    {
+        if (!CanRefreshHeaders) return;
+        foreach (var file in paths)
+            if (!HeaderFiles.Any(f => string.Equals(f.Path, file, StringComparison.OrdinalIgnoreCase))) HeaderFiles.Add(new(file));
+        SaveSettings(); Initialization = ParseHeadersAsync();
+    }
+    [RelayCommand(CanExecute = nameof(CanRefreshHeaders))]
+    private void RemoveHeaderFile(HeaderFileEntry file)
+    {
+        HeaderFiles.Remove(file); SaveSettings(); Initialization = ParseHeadersAsync();
+    }
+    [RelayCommand(CanExecute = nameof(CanRefreshHeaders))]
+    private void ClearAllHeaderFiles()
+    {
+        HeaderFiles.Clear(); SaveSettings(); Initialization = ParseHeadersAsync();
+    }
+    [RelayCommand(CanExecute = nameof(CanRefreshHeaders))]
+    private Task RefreshHeaders() => Initialization = ParseHeadersAsync();
     [RelayCommand]
     private void ShowLastFail()
     {
-        if (_lastUnresolvedTypes.Count == 0) return;
-        var dialog = new LoadFailDialog(_lastUnresolvedTypes);
-        dialog.ShowDialog();
+        if (_lastUnresolvedTypes.Count > 0) new LoadFailDialog(_lastUnresolvedTypes).ShowDialog();
     }
-
-    private void ParseHeaders()
+    private async Task ParseHeadersAsync()
     {
-        if (HeaderFiles.Count == 0) return;
-        ParserStatus = "파싱 중...";
-
-        Task.Run(() =>
+        var version = ++_parseVersion;
+        CloseSearch();
+        foreach (var file in HeaderFiles) file.Check();
+        var paths = HeaderFiles.Where(f => f.IsAvailable).Select(f => f.Path).ToArray();
+        _currentDb = null;
+        foreach (var tab in Tabs) tab.SetUnavailable("헤더 / 구조체 확인 대기");
+        if (paths.Length == 0)
         {
-            try
+            ParserStatus = HeaderFiles.Count == 0 ? "헤더 파일을 업로드하세요." : "읽을 수 있는 헤더가 없습니다. 빨간색 항목을 확인하세요.";
+            _lastUnresolvedTypes.Clear(); HasLastUnresolved = false; return;
+        }
+        IsParsing = true; ParserStatus = "파싱 중...";
+        try
+        {
+            var result = await Task.Run(() => new HeaderParserService().Parse(paths));
+            if (_disposed || version != _parseVersion) return;
+            _currentDb = result.Database;
+            _lastUnresolvedTypes = result.UnresolvedTypes;
+            HasLastUnresolved = _lastUnresolvedTypes.Count > 0;
+            foreach (var tab in Tabs)
             {
-                var parser = new HeaderParserService();
-                var result = parser.Parse(HeaderFiles);
-                _currentDb = result.Database;
-
-                Application.Current?.Dispatcher.Invoke(() =>
-                {
-                    ParserStatus = $"✅ 파싱 완료 — 구조체 {result.Database.Structs.Count}개, 열거형 {result.Database.Enums.Count}개";
-
-                    if (!result.Success)
-                    {
-                        _lastUnresolvedTypes = result.UnresolvedTypes;
-                        HasLastUnresolved = true;
-                        var dialog = new LoadFailDialog(result.UnresolvedTypes);
-                        dialog.ShowDialog();
-                    }
-                    else
-                    {
-                        _lastUnresolvedTypes = new();
-                        HasLastUnresolved = false;
-                    }
-
-                    // 수정 7: 파싱 완료 후 저장된 탭 자동 복원
-                    RestoreSavedTabs();
-                });
+                var type = _currentDb.ResolveType(tab.StructName);
+                if (type == null) { tab.SetUnavailable($"구조체 '{tab.StructName}' 미발견"); continue; }
+                tab.Initialize(_currentDb, type); tab.BuildTree();
             }
-            catch (Exception ex)
-            {
-                Application.Current?.Dispatcher.Invoke(() =>
-                    ParserStatus = $"❌ 파싱 오류: {ex.Message}");
-            }
-        });
+            ParserStatus = $"파싱 완료 — 구조체 {result.Database.Structs.Count}개, 누락 헤더 {HeaderFiles.Count(f => !f.IsAvailable)}개";
+            UpdateSearchScopeItems();
+        }
+        catch (Exception ex)
+        {
+            if (version == _parseVersion && !_disposed) ParserStatus = "파싱 오류: " + ex.Message;
+        }
+        finally { if (version == _parseVersion && !_disposed) IsParsing = false; }
     }
-
     [RelayCommand]
     private void LoadShmTab()
     {
-        if (_currentDb == null)
-        {
-            MessageBox.Show("먼저 헤더 파일을 업로드하세요.", "알림", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
+        if (_currentDb == null || IsParsing) { ParserStatus = "먼저 헤더 파일을 파싱하세요."; return; }
         if (string.IsNullOrWhiteSpace(NewShmName) || string.IsNullOrWhiteSpace(NewStructName))
-        {
-            MessageBox.Show("SHM Name과 Struct 이름을 입력하세요.", "알림", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        // Check for duplicate SHM Name
-        if (Tabs.Any(t => t.ShmName == NewShmName))
-        {
-            var existingTab = Tabs.First(t => t.ShmName == NewShmName);
-            SelectedTab = existingTab;
-            MessageBox.Show($"'{NewShmName}' 탭이 이미 열려 있습니다.", "알림",
-                MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var resolvedTypeName = _currentDb.ResolveTypeAlias(NewStructName);
-        if (!_currentDb.Structs.TryGetValue(resolvedTypeName, out var rootType))
-        {
-            MessageBox.Show($"구조체 '{NewStructName}'을(를) 헤더에서 찾을 수 없습니다.", "오류",
-                MessageBoxButton.OK, MessageBoxImage.Error);
-            return;
-        }
-
-        var tab = new ShmTabViewModel
-        {
-            ShmName = NewShmName,
-            StructName = NewStructName,
-            RefreshMode = NewRefreshMode
-        };
-        tab.Initialize(_currentDb, rootType);
-
-        Tabs.Add(tab);
-        SelectedTab = tab;
-
-        // 수정 1: SHM 연결 없이 빈 트리 생성
-        tab.BuildTree();
-
-        if (tab.HasUnresolvedTypes)
-        {
-            new LoadFailDialog(new Dictionary<string, List<string>>
-            {
-                [tab.TabTitle] = tab.UnresolvedTypes
-            }).ShowDialog();
-        }
-
-        // 수정 7: 탭 목록 저장
-        SaveTabs();
+        { ParserStatus = "SHM Name과 Struct 이름을 입력하세요."; return; }
+        var existing = Tabs.FirstOrDefault(t => t.ShmName == NewShmName.Trim());
+        if (existing != null) { SelectedTab = existing; return; }
+        var type = _currentDb.ResolveType(NewStructName.Trim());
+        if (type == null) { ParserStatus = $"구조체 '{NewStructName}' 미발견"; return; }
+        AddPendingTab(new(NewShmName.Trim(), NewStructName.Trim(), NewRefreshMode.ToString()));
+        var tab = Tabs.Last(); tab.Initialize(_currentDb, type); tab.BuildTree(); SelectedTab = tab;
+        SaveSettings();
     }
-
     [RelayCommand]
     private void CloseTab(ShmTabViewModel tab)
     {
-        tab.Unload();
-        tab.Dispose();
-        Tabs.Remove(tab);
-        SelectedTab = Tabs.LastOrDefault();
-
-        // 수정 7: 탭 목록 저장
-        SaveTabs();
+        tab.PropertyChanged -= TabChanged; tab.Dispose(); Tabs.Remove(tab); SelectedTab = Tabs.LastOrDefault(); SaveSettings();
     }
-
-    // 수정 7: 탭 목록 저장 헬퍼
-    private void SaveTabs()
+    private void SaveSettings()
     {
-        var entries = Tabs.Select(t => new ShmTabEntry(t.ShmName, t.StructName, t.RefreshMode.ToString()));
-        ShmTabsStorage.Save(entries);
+        if (_changingSettings || _disposed) return;
+        try { _settings.Save(new(UseDefaultSctcClean, HeaderFiles.Select(f => f.Path).ToList(),
+            Tabs.Select(t => new ShmTabEntry(t.ShmName, t.StructName, t.RefreshMode.ToString())).ToList())); SettingsError = string.Empty; }
+        catch (Exception ex) { SettingsError = "설정 저장 실패: " + ex.Message; }
     }
-
-    // 수정 7: 저장된 탭 복원
-    private void RestoreSavedTabs()
+    public void Dispose()
     {
-        if (_currentDb == null) return;
-
-        var entries = ShmTabsStorage.Load();
-        if (entries.Count == 0) return;
-
-        var validEntries = new List<ShmTabEntry>();
-        foreach (var entry in entries)
-        {
-            var resolvedTypeName = _currentDb.ResolveTypeAlias(entry.StructName);
-            if (!_currentDb.Structs.TryGetValue(resolvedTypeName, out var rootType))
-                continue; // 매칭 실패 — 무시
-
-            // 이미 같은 탭이 열려 있으면 복원 건너뜀
-            if (Tabs.Any(t => t.ShmName == entry.ShmName && t.StructName == entry.StructName))
-            {
-                validEntries.Add(entry);
-                continue;
-            }
-
-            if (!Enum.TryParse<RefreshMode>(entry.RefreshMode, out var mode))
-                mode = RefreshMode.Ms500;
-
-            var tab = new ShmTabViewModel
-            {
-                ShmName = entry.ShmName,
-                StructName = entry.StructName,
-                RefreshMode = mode
-            };
-            tab.Initialize(_currentDb, rootType);
-            tab.BuildTree();
-
-            Tabs.Add(tab);
-            validEntries.Add(entry);
-        }
-
-        if (Tabs.Count > 0)
-            SelectedTab = Tabs.Last();
-
-        // 유효하지 않은 항목 제거 후 재저장
-        if (validEntries.Count != entries.Count)
-            ShmTabsStorage.Save(validEntries);
-
-        // 미발견 타입이 있는 탭들을 하나의 팝업으로 통합 표시
-        var failedTabs = Tabs
-            .Where(t => t.HasUnresolvedTypes)
-            .ToDictionary(t => t.TabTitle, t => t.UnresolvedTypes);
-
-        if (failedTabs.Count > 0)
-            new LoadFailDialog(failedTabs).ShowDialog();
+        if (_disposed) return;
+        _disposed = true; ++_parseVersion;
+        foreach (var tab in Tabs) { tab.PropertyChanged -= TabChanged; tab.Dispose(); }
+        DatDiff.Dispose();
     }
 
     // ─── 검색 ───

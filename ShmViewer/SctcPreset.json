@@ -1,0 +1,53 @@
+{
+  "HeaderGroups": [
+    {
+      "Directory": "D:\\K12_SCTC\\SCTCApplication\\lib\\Internal\\common\\h",
+      "Files": [
+        "_DynCfg.h",
+        "_enumdef.h",
+        "_Run.h",
+        "_StcCfg.h",
+        "jobinfo.h"
+      ]
+    },
+    {
+      "Directory": "D:\\K12_SCTC\\SCTCApplication\\src\\SMA\\SharedMemory_App",
+      "Files": [
+        "K12Initial.h",
+        "SharedMemory_App.h"
+      ]
+    }
+  ],
+  "Tabs": [
+    {
+      "ShmName": "RUNNING_SHARED_MEMORY",
+      "StructName": "tagRun",
+      "RefreshMode": "Ms1000"
+    },
+    {
+      "ShmName": "STATIC_CONFIGURE_MEMORY",
+      "StructName": "tagStcCfg",
+      "RefreshMode": "Ms1000"
+    },
+    {
+      "ShmName": "DYNAMIC_CONFIGURE_MEMORY",
+      "StructName": "tagDynCfg",
+      "RefreshMode": "Ms1000"
+    },
+    {
+      "ShmName": "INITIAL_SHARED_MEMORY",
+      "StructName": "tagUnitInitial",
+      "RefreshMode": "Ms1000"
+    },
+    {
+      "ShmName": "MAINTITEM_SHARED_MEMORY",
+      "StructName": "stMaintItem",
+      "RefreshMode": "Ms1000"
+    },
+    {
+      "ShmName": "OBJECT_INFO_MEMORY",
+      "StructName": "STJOBINFO",
+      "RefreshMode": "Ms1000"
+    }
+  ]
+}

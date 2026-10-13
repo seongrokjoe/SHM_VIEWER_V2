@@ -16,6 +16,9 @@ public class ParseResult
 
 public class HeaderParserService
 {
+    public ShmViewer.Core.Dat.BinarySchema ParseBinary(IEnumerable<string> headers, string structName, HeaderParseOptions? options = null)
+        => new BinaryHeaderParser().Parse(headers, structName, options ?? new());
+
     public ParseResult Parse(IEnumerable<string> headerFilePaths)
     {
         var paths = headerFilePaths.ToList();

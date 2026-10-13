@@ -50,11 +50,23 @@ public partial class MainWindow : Window
         public TreeView? TreeView { get; init; }
     }
 
-    public MainWindow()
+    public MainWindow() : this(new MainViewModel()) { }
+
+    internal MainWindow(MainViewModel viewModel)
     {
         InitializeComponent();
-        _vm = new MainViewModel();
+        _vm = viewModel;
         DataContext = _vm;
+        Closing += (_, e) =>
+        {
+            if (_vm.DatDiff.IsBusy)
+            {
+                _vm.DatDiff.Status = "진행 중인 작업을 마치거나 취소한 후 종료하세요.";
+                e.Cancel = true;
+            }
+            else if (!_vm.DatDiff.ConfirmDiscard()) e.Cancel = true;
+        };
+        Closed += (_, _) => _vm.Dispose();
 
         Loaded += (_, _) =>
         {
@@ -70,6 +82,15 @@ public partial class MainWindow : Window
             _currentSplitter.ReleaseMouseCapture();
             _currentSplitter = null;
         };
+    }
+
+    private void DefaultPreset_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox checkbox)
+        {
+            _vm.SetDefaultPreset(checkbox.IsChecked == true);
+            checkbox.SetCurrentValue(System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, _vm.UseDefaultSctcClean);
+        }
     }
 
     private void SetupSearchResultsGrouping()
@@ -95,6 +116,7 @@ public partial class MainWindow : Window
 
     private void Window_Drop(object sender, DragEventArgs e)
     {
+        if (WorkspaceTabs.SelectedIndex != 0) return;
         if (!e.Data.GetDataPresent(DataFormats.FileDrop))
             return;
 
@@ -506,7 +528,7 @@ public partial class MainWindow : Window
 
     private SelectedTreeViewContext FindTreeViewForTab(ShmTabViewModel tab)
     {
-        var tabControl = FindVisualChild<TabControl>(this);
+        var tabControl = ShmTabControl;
         if (tabControl == null)
             return new SelectedTreeViewContext();
 
