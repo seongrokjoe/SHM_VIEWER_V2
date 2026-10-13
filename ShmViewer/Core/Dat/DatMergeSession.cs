@@ -2,7 +2,10 @@ using System.IO;
 
 namespace ShmViewer.Core.Dat;
 
-public enum ValueResolution { Unresolved, Automatic, Version1, Version2, Manual, Zero }
+public enum ValueResolution { Unresolved, Automatic, Version1, Version2, Manual, Zero, Mixed }
+
+[Flags]
+public enum DatDifferenceKind { None = 0, Size = 1, Value = 2, Type = 4, Members = 8, RawBytes = 16, LeftOnly = 32, RightOnly = 64 }
 
 public sealed class DatMergeNode
 {
@@ -15,6 +18,8 @@ public sealed class DatMergeNode
     public DatMergeNode? Parent { get; init; }
     public List<DatMergeNode> Children { get; } = new();
     public ValueResolution Resolution { get; internal set; }
+    public ValueResolution AppliedResolution { get; internal set; }
+    public DatDifferenceKind DifferenceKinds { get; internal set; }
     public string? ActiveUnionBranch { get; internal set; }
     public bool IsExpanded { get; set; }
     public bool HasDifference { get; internal set; }
@@ -119,6 +124,12 @@ public sealed class DatMergeSession
         var bytes = new byte[source.Type.Size];
         BinaryValueCodec.CopyConverted(data, source, bytes, Local(source));
         node.ValueBytes = bytes; node.Resolution = resolution;
+        Stamp(node, resolution);
+    }
+    private static void Stamp(DatMergeNode node, ValueResolution resolution)
+    {
+        node.Resolution = resolution;
+        foreach (var child in node.Children) Stamp(child, resolution);
     }
     private static void Clear(DatMergeNode node)
     {
@@ -131,6 +142,35 @@ public sealed class DatMergeSession
         for (var current = node; current != null; current = current.Parent)
             if (current.ValueBytes != null) return current;
         return null;
+    }
+
+    public bool CanSelectSource(DatMergeNode node, bool useLeft)
+    {
+        if ((useLeft ? node.Left : node.Right) == null) return false;
+        for (var parent = node.Parent; parent != null; parent = parent.Parent)
+            if (IsArrayElement(parent) || parent.IsUnion) return false;
+        return true;
+    }
+    public bool? SourceSelection(DatMergeNode node, bool useLeft)
+    {
+        var source = useLeft ? node.Left : node.Right;
+        if (source == null || node.Target == null || node.Target.Type.Size == 0) return false;
+        var expected = useLeft ? ValueResolution.Version1 : ValueResolution.Version2;
+        if (IsArrayElement(node) || node.IsUnion || !source.IsContainer || node.Children.Count == 0)
+        {
+            bool HasOrigin(DatMergeNode current) => current.Target != null &&
+                (current.AppliedResolution == expected || current.AppliedResolution == ValueResolution.Automatic || current.Children.Any(HasOrigin));
+            return node.AppliedResolution == ValueResolution.Mixed ? (HasOrigin(node) ? null : false) :
+                node.AppliedResolution == expected || node.AppliedResolution == ValueResolution.Automatic;
+        }
+        var states = node.Children.Where(c => (useLeft ? c.Left : c.Right) != null).Select(c => SourceSelection(c, useLeft)).ToArray();
+        return states.Length == 0 ? false : states.All(s => s == true) ? true : states.All(s => s == false) ? false : null;
+    }
+    public void ToggleSource(DatMergeNode node, bool useLeft)
+    {
+        if (!CanSelectSource(node, useLeft)) return;
+        if (SourceSelection(node, useLeft) == true) Remove(new[] { node });
+        else ApplySource(new[] { node }, useLeft);
     }
 
     public void ApplySource(IEnumerable<DatMergeNode> nodes, bool useLeft) => Change(() =>
@@ -151,13 +191,16 @@ public sealed class DatMergeSession
         if (source == null) return;
         var data = useLeft ? Left.Data : Right.Data;
         var resolution = useLeft ? ValueResolution.Version1 : ValueResolution.Version2;
+        if (node.Left != null && node.Right != null && SameValue(Left.Data, node.Left, Right.Data, node.Right))
+            resolution = ValueResolution.Automatic;
         var owner = node.Parent == null ? null : BlobOwner(node.Parent);
         if (owner != null)
         {
             if (node.Target == null) throw new InvalidDataException("채택한 배열 요소/union 구조에 없는 멤버입니다. 구조 전체를 선택하세요.");
             var bytes = (byte[])owner.ValueBytes!.Clone();
             BinaryValueCodec.CopyConverted(data, source, bytes, node.Target with { Offset = node.Target.Offset - owner.Target!.Offset });
-            owner.ValueBytes = bytes; owner.Resolution = resolution; Activate(node);
+            MarkWrite(owner, node, resolution);
+            owner.ValueBytes = bytes; Activate(node);
             return;
         }
         if (IsArrayElement(node) || !source.IsContainer || !source.Children().Any() || source.Type.Kind == BinaryKind.Union)
@@ -226,7 +269,27 @@ public sealed class DatMergeSession
         var owner = BlobOwner(node) ?? throw new InvalidDataException("편집할 값을 선택하세요.");
         var bytes = (byte[])owner.ValueBytes!.Clone();
         var field = ReferenceEquals(owner, node) ? Local(owner.LayoutSource!) : node.Target! with { Offset = node.Target!.Offset - owner.Target!.Offset };
-        write(bytes, field); owner.ValueBytes = bytes; owner.Resolution = resolution; Activate(node);
+        write(bytes, field); MarkWrite(owner, node, resolution); owner.ValueBytes = bytes; Activate(node);
+    }
+    private static void MarkWrite(DatMergeNode owner, DatMergeNode node, ValueResolution resolution)
+    {
+        if (owner == node) { Stamp(node, resolution); return; }
+        Stamp(node, resolution);
+        var written = node.Target!;
+        var start = (long)written.Offset * 8 + written.BitOffset;
+        var end = start + (written.BitWidth > 0 ? written.BitWidth : written.Type.Size * 8L);
+        void UpdateAliases(DatMergeNode current)
+        {
+            if (current == node || current.Target == null) return;
+            var field = current.Target;
+            var a = (long)field.Offset * 8 + field.BitOffset;
+            var b = a + (field.BitWidth > 0 ? field.BitWidth : field.Type.Size * 8L);
+            if (a >= end || b <= start) return;
+            // A partially overwritten alias no longer represents a complete source value.
+            current.Resolution = a >= start && b <= end ? resolution : ValueResolution.Mixed;
+            foreach (var child in current.Children) UpdateAliases(child);
+        }
+        UpdateAliases(owner);
     }
     private static void Activate(DatMergeNode node)
     {
@@ -319,7 +382,7 @@ public sealed class DatMergeSession
             if (node.ValueBytes != null)
             {
                 BinaryValueCodec.CopyConverted(node.ValueBytes, Local(node.LayoutSource!), Result, field);
-                BindFixed(node, field, node.Resolution); return;
+                BindFixed(node, field); return;
             }
             var children = field.Children().ToArray();
             var included = node.Children.Where(c => c.ResultType != null).ToArray();
@@ -329,14 +392,14 @@ public sealed class DatMergeSession
                 Bind(included[i], target);
             }
         }
-        void BindFixed(DatMergeNode node, BinaryField field, ValueResolution resolution)
+        void BindFixed(DatMergeNode node, BinaryField field)
         {
             foreach (var childField in field.Children())
             {
                 var child = node.Children.FirstOrDefault(c => c.Key == ChildKey(field, childField));
                 if (child == null) continue;
-                child.Target = childField; child.Resolution = resolution;
-                BindFixed(child, childField, resolution);
+                child.Target = childField;
+                BindFixed(child, childField);
             }
         }
         Bind(Root, new("", type, 0));
@@ -397,22 +460,33 @@ public sealed class DatMergeSession
         {
             var a = node.Left; var b = node.Right;
             var reasons = new List<string>();
-            if (a == null || b == null) reasons.Add(a == null ? "버전2만" : "버전1만");
+            var kinds = DatDifferenceKind.None;
+            if (a == null || b == null)
+            {
+                kinds |= a == null ? DatDifferenceKind.RightOnly : DatDifferenceKind.LeftOnly;
+                reasons.Add(a == null ? "버전2만" : "버전1만");
+            }
             else
             {
-                if (a.ByteLength != b.ByteLength) reasons.Add($"크기 차이 {a.ByteLength:N0} → {b.ByteLength:N0} B ({b.ByteLength - a.ByteLength:+#;-#;0})");
-                if (a.Type.Kind != b.Type.Kind || !a.IsContainer && a.Signature != b.Signature) reasons.Add("타입 차이");
+                if (a.ByteLength != b.ByteLength)
+                { kinds |= DatDifferenceKind.Size; reasons.Add($"크기 차이: {a.ByteLength:N0} → {b.ByteLength:N0} B ({b.ByteLength - a.ByteLength:+#;-#;0})"); }
+                if (a.Type.Kind != b.Type.Kind || !a.IsContainer && a.Signature != b.Signature)
+                { kinds |= DatDifferenceKind.Type; reasons.Add("타입 차이"); }
                 else if (a.IsContainer)
                 {
                     var ak = a.Children().Select(c => ChildKey(a, c)); var bk = b.Children().Select(c => ChildKey(b, c));
-                    if (!ak.SequenceEqual(bk)) reasons.Add("멤버 구성 차이");
+                    if (!ak.SequenceEqual(bk)) { kinds |= DatDifferenceKind.Members; reasons.Add("멤버 구성 차이"); }
                     if (a.Type.Kind == BinaryKind.Union && a.Signature == b.Signature && !BinaryValueCodec.Equal(Left.Data, a, Right.Data, b))
-                        reasons.Add("원시 바이트 차이");
+                    { kinds |= DatDifferenceKind.RawBytes; reasons.Add("원시 바이트 차이"); }
                 }
                 else if (a.Signature == b.Signature && !BinaryValueCodec.Equal(Left.Data, a, Right.Data, b))
-                    reasons.Add(a.Type.IsText && BinaryValueCodec.Format(Left.Data, a, "UTF-8") == BinaryValueCodec.Format(Right.Data, b, "UTF-8")
-                        ? "문자열 동일 · 원시 바이트 차이" : "값 차이");
+                {
+                    var rawOnly = a.Type.IsText && BinaryValueCodec.Format(Left.Data, a, "UTF-8") == BinaryValueCodec.Format(Right.Data, b, "UTF-8");
+                    kinds |= rawOnly ? DatDifferenceKind.RawBytes : DatDifferenceKind.Value;
+                    reasons.Add(rawOnly ? "문자열 동일 · 원시 바이트 차이" : "값 차이");
+                }
             }
+            node.DifferenceKinds = kinds;
             var childCount = node.Children.Sum(c => c.DifferenceCount);
             if (childCount > 0) reasons.Add($"하위 차이 {childCount:N0}개");
             node.HasDifference = reasons.Count > 0;
@@ -420,6 +494,13 @@ public sealed class DatMergeSession
             node.Difference = reasons.Count == 0 ? "동일" : string.Join(" · ", reasons);
             node.HasUnresolved = node.Target == null ||
                 !node.IsUnion && !IsArrayElement(node) && node.Children.Any(c => c.HasUnresolved);
+            var included = node.Children.Where(c => c.Target != null).ToArray();
+            node.AppliedResolution = node.Target == null ? ValueResolution.Unresolved : node.Resolution;
+            if (node.Target?.IsContainer == true && !node.IsUnion && included.Length > 0)
+            {
+                var origins = included.Select(c => c.AppliedResolution).Where(r => r != ValueResolution.Automatic).Distinct().ToArray();
+                node.AppliedResolution = origins.Length == 0 ? ValueResolution.Automatic : origins.Length == 1 ? origins[0] : ValueResolution.Mixed;
+            }
         }
         void Count(DatMergeNode node)
         {

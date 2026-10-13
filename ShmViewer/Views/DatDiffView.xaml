@@ -5,36 +5,49 @@
  xmlns:local="clr-namespace:ShmViewer">
  <Grid Background="#1E2023">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-  <ScrollViewer Grid.Row="0" MaxHeight="310" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" IsEnabled="{Binding IsBusy, Converter={x:Static local:InverseBoolConverter.Instance}}">
+  <ScrollViewer x:Name="InputScroller" Grid.Row="0" MaxHeight="310" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" IsEnabled="{Binding CanInteract}">
    <StackPanel>
     <StackPanel Orientation="Horizontal" Margin="12,8,8,0">
      <RadioButton x:Name="RunDataOption" Content="Run Data" GroupName="DatKind" IsChecked="{Binding IsRunData}" Foreground="#EEE" Margin="0,0,18,0"/>
      <RadioButton x:Name="InitDataOption" Content="Init Data" GroupName="DatKind" IsChecked="{Binding IsInitData}" Foreground="#EEE"/>
+     <CheckBox x:Name="LoadOnlyOption" Content="Load Only" IsChecked="{Binding LoadOnly}" Foreground="#9CDCFE" FontWeight="Bold" Margin="24,0,16,0" Focusable="False"/>
+     <StackPanel Orientation="Horizontal" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}">
+      <TextBlock Text="조회 대상: " />
+      <RadioButton x:Name="ViewerLeftOption" Content="버전1" GroupName="ViewerSource" IsChecked="{Binding ViewerLeftOption}" Foreground="#EEE"/>
+      <RadioButton x:Name="ViewerRightOption" Content="버전2" GroupName="ViewerSource" IsChecked="{Binding ViewerUsesRight}" Foreground="#EEE"/>
+     </StackPanel>
     </StackPanel>
    <Grid Margin="5"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
-    <views:DatInputView Grid.Column="0" DataContext="{Binding Left}"/>
-    <views:DatInputView Grid.Column="1" DataContext="{Binding Right}"/>
+    <views:DatInputView x:Name="LeftInput" Grid.Column="0" DataContext="{Binding Left}"/>
+    <views:DatInputView x:Name="RightInput" Grid.Column="1" DataContext="{Binding Right}"/>
    </Grid>
-    <DockPanel Margin="10,0,10,7">
+    <DockPanel Margin="10,0,10,7" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
      <TextBlock Text="버전3 · 결과  " Foreground="#9CDCFE" FontWeight="Bold"/>
      <TextBlock Text="{Binding ResultSummary}" Foreground="#D5E6DB" TextWrapping="Wrap"/>
     </DockPanel>
+    <TextBlock Text="{Binding ViewerSummary}" ToolTip="{Binding ViewerSummary}" Foreground="#9CDCFE" TextTrimming="CharacterEllipsis" Margin="10,0,10,7" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
    </StackPanel>
   </ScrollViewer>
   <WrapPanel Grid.Row="1" Margin="8,2,8,6">
-   <Button Content="Diff" Command="{Binding DiffCommand}" Style="{DynamicResource DarkBtn}" Margin="0,0,6,0"/>
+   <Button Content="{Binding ExecuteLabel}" Command="{Binding DiffCommand}" Style="{DynamicResource DarkBtn}" Margin="0,0,6,0"/>
+   <Button x:Name="ResetButton" Content="전체 초기화" Command="{Binding ResetCommand}" Margin="0,0,10,0" Focusable="False"/>
    <Button Content="취소" Command="{Binding CancelCommand}" Margin="0,0,12,0" Visibility="{Binding IsBusy, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+   <StackPanel Orientation="Horizontal" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
    <CheckBox Content="차이 / 미포함만" IsChecked="{Binding DifferencesOnly}" Foreground="#DDD" VerticalAlignment="Center" Margin="0,0,10,0"/>
    <Button Content="◀ 이전 차이" Command="{Binding PreviousDifferenceCommand}" Margin="0,0,4,0"/>
    <Button Content="다음 차이 ▶" Command="{Binding NextDifferenceCommand}" Margin="0,0,12,0"/>
+   </StackPanel>
    <TextBlock Text="문자 인코딩 " />
    <ComboBox ItemsSource="{Binding Encodings}" SelectedItem="{Binding EncodingName}" Width="85" Margin="0,0,8,0"/>
    <CheckBox Content="HEX" IsChecked="{Binding ShowHex}" Foreground="#DDD" VerticalAlignment="Center" Margin="0,0,12,0"/>
+   <StackPanel Orientation="Horizontal" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
    <Button Content="실행 취소" Command="{Binding UndoCommand}" Margin="0,0,4,0"/>
    <Button Content="다시 실행" Command="{Binding RedoCommand}" Margin="0,0,12,0"/>
    <Button Content="버전3 DAT 저장…" Command="{Binding SaveCommand}" Style="{DynamicResource DarkBtn}"/>
+   </StackPanel>
   </WrapPanel>
   <DataGrid x:Name="ComparisonGrid" Grid.Row="2" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+   Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}"
    PreviewKeyDown="ComparisonGrid_PreviewKeyDown"
    SelectionChanged="ComparisonGrid_SelectionChanged" SelectionMode="Extended" SelectionUnit="FullRow"
    IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False"
@@ -43,47 +56,76 @@
    Background="#1E2023" Foreground="#DDD" BorderBrush="#444" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#3A3D42"
    HeadersVisibility="Column" IsEnabled="{Binding IsBusy, Converter={x:Static local:InverseBoolConverter.Instance}}">
    <DataGrid.RowStyle><Style TargetType="DataGridRow">
-    <Setter Property="Background" Value="{Binding RowColor}"/>
-    <Setter Property="BorderBrush" Value="{Binding StateColor}"/><Setter Property="BorderThickness" Value="4,0,0,0"/>
+    <Setter Property="Background" Value="#242A32"/>
+    <Setter Property="BorderBrush" Value="{Binding StateColor}"/><Setter Property="BorderThickness" Value="3,0,0,0"/>
    </Style></DataGrid.RowStyle>
    <DataGrid.CellStyle><Style TargetType="DataGridCell">
-    <Setter Property="Foreground" Value="#EEEEEE"/><Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Foreground" Value="#EEEEEE"/><Setter Property="BorderThickness" Value="1"/><Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="Background" Value="Transparent"/>
     <Style.Triggers><Trigger Property="IsSelected" Value="True">
-     <Setter Property="Background" Value="#294C69"/><Setter Property="Foreground" Value="White"/>
+     <Setter Property="BorderBrush" Value="#FFFFFF"/><Setter Property="Background" Value="Transparent"/>
     </Trigger></Style.Triggers>
    </Style></DataGrid.CellStyle>
-   <DataGrid.ColumnHeaderStyle><Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="#353941"/><Setter Property="Foreground" Value="#9CDCFE"/><Setter Property="Padding" Value="8,5"/></Style></DataGrid.ColumnHeaderStyle>
+   <DataGrid.ColumnHeaderStyle><Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="#353941"/><Setter Property="Foreground" Value="#9CDCFE"/><Setter Property="Padding" Value="8,5"/><Setter Property="BorderBrush" Value="#8A9BAE"/><Setter Property="BorderThickness" Value="0,0,2,0"/></Style></DataGrid.ColumnHeaderStyle>
    <DataGrid.Columns>
     <DataGridTemplateColumn Header="버전1 · 원본" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
-     <Grid Margin="4"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
-      <Button Content="{Binding ToggleText}" Command="{Binding Owner.ToggleCommand}" CommandParameter="{Binding}" Width="20" Height="22" VerticalAlignment="Top" Margin="{Binding Indent}" Background="Transparent" Foreground="#CCC" BorderThickness="0"/>
-      <StackPanel Grid.Column="1"><TextBlock Text="{Binding LeftPath}" ToolTip="{Binding LeftPath}" TextTrimming="CharacterEllipsis" Foreground="#DCDCAA"/>
-       <TextBlock Text="{Binding LeftDetail}" Foreground="#969CA6" FontSize="10" TextTrimming="CharacterEllipsis"/>
-       <DockPanel><Button DockPanel.Dock="Right" Content="1 → 3" Command="{Binding Owner.UseLeftRowCommand}" CommandParameter="{Binding}" IsEnabled="{Binding HasLeft}" ToolTip="이 항목을 버전3에 적용 (Ctrl+→)" Padding="4,0" Margin="4,0,0,0"/>
-        <TextBlock Text="{Binding LeftValue}" ToolTip="{Binding LeftValue}" TextTrimming="CharacterEllipsis"/>
-       </DockPanel>
-      </StackPanel>
-     </Grid>
+     <Border Background="{Binding LeftBackground}" BorderBrush="#8A9BAE" BorderThickness="0,0,2,0" Padding="6" MinHeight="86">
+      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="25"/><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+       <CheckBox IsChecked="{Binding LeftChecked, Mode=OneWay}" IsThreeState="True" Command="{Binding Owner.CheckLeftCommand}" CommandParameter="{Binding}" IsEnabled="{Binding HasLeft}" VerticalAlignment="Top" Margin="2,3,0,0" ToolTip="버전1 적용 / 체크 해제 시 결과에서 제외">
+        <CheckBox.Style><Style TargetType="CheckBox"><Setter Property="Visibility" Value="Visible"/><Style.Triggers><DataTrigger Binding="{Binding ShowChoices}" Value="False"><Setter Property="Visibility" Value="Hidden"/></DataTrigger></Style.Triggers></Style></CheckBox.Style>
+       </CheckBox>
+       <Button Grid.Column="1" Content="{Binding ToggleText}" Command="{Binding Owner.ToggleCommand}" CommandParameter="{Binding}" Width="20" Height="22" VerticalAlignment="Top" Margin="{Binding Indent}" Background="Transparent" Foreground="#CCC" BorderThickness="0"/>
+       <StackPanel Grid.Column="2"><TextBlock Text="{Binding LeftPath}" ToolTip="{Binding LeftPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
+        <TextBlock Text="{Binding LeftType}" Foreground="{Binding TypeColor}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+        <WrapPanel><TextBlock Text="{Binding LeftDetail}" Foreground="#AAB6C5" FontSize="11" Margin="0,0,8,0"/><TextBlock Text="{Binding LeftSize}" Foreground="{Binding SizeColor}" FontWeight="SemiBold" FontSize="11"/></WrapPanel>
+        <TextBlock Text="{Binding LeftValue}" Foreground="{Binding ValueColor}" ToolTip="{Binding LeftValue}" TextTrimming="CharacterEllipsis"/>
+       </StackPanel>
+      </Grid>
+     </Border>
     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
     <DataGridTemplateColumn Header="버전2 · 비교 원본" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
-     <StackPanel Margin="7,4"><TextBlock Text="{Binding RightPath}" ToolTip="{Binding RightPath}" TextTrimming="CharacterEllipsis" Foreground="#DCDCAA"/>
-      <TextBlock Text="{Binding RightDetail}" Foreground="#969CA6" FontSize="10" TextTrimming="CharacterEllipsis"/>
-      <DockPanel><Button DockPanel.Dock="Right" Content="2 → 3" Command="{Binding Owner.UseRightRowCommand}" CommandParameter="{Binding}" IsEnabled="{Binding HasRight}" ToolTip="이 항목을 버전3에 적용 (Ctrl+←)" Padding="4,0" Margin="4,0,0,0"/>
-       <TextBlock Text="{Binding RightValue}" ToolTip="{Binding RightValue}" TextTrimming="CharacterEllipsis"/>
-      </DockPanel>
-     </StackPanel>
+     <Border Background="{Binding RightBackground}" BorderBrush="#8A9BAE" BorderThickness="0,0,2,0" Padding="6" MinHeight="86">
+      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="25"/><ColumnDefinition/></Grid.ColumnDefinitions>
+       <CheckBox IsChecked="{Binding RightChecked, Mode=OneWay}" IsThreeState="True" Command="{Binding Owner.CheckRightCommand}" CommandParameter="{Binding}" IsEnabled="{Binding HasRight}" VerticalAlignment="Top" Margin="2,3,0,0" ToolTip="버전2 적용 / 체크 해제 시 결과에서 제외">
+        <CheckBox.Style><Style TargetType="CheckBox"><Setter Property="Visibility" Value="Visible"/><Style.Triggers><DataTrigger Binding="{Binding ShowChoices}" Value="False"><Setter Property="Visibility" Value="Hidden"/></DataTrigger></Style.Triggers></Style></CheckBox.Style>
+       </CheckBox>
+       <StackPanel Grid.Column="1"><TextBlock Text="{Binding RightPath}" ToolTip="{Binding RightPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
+        <TextBlock Text="{Binding RightType}" Foreground="{Binding TypeColor}" FontSize="11" TextTrimming="CharacterEllipsis"/>
+        <WrapPanel><TextBlock Text="{Binding RightDetail}" Foreground="#AAB6C5" FontSize="11" Margin="0,0,8,0"/><TextBlock Text="{Binding RightSize}" Foreground="{Binding SizeColor}" FontWeight="SemiBold" FontSize="11"/></WrapPanel>
+        <TextBlock Text="{Binding RightValue}" Foreground="{Binding ValueColor}" ToolTip="{Binding RightValue}" TextTrimming="CharacterEllipsis"/>
+       </StackPanel>
+      </Grid>
+     </Border>
     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
     <DataGridTemplateColumn Header="버전3 · 결과 (아래에서 편집)" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
-     <StackPanel Margin="7,4"><TextBlock Text="{Binding TargetPath}" ToolTip="{Binding TargetPath}" TextTrimming="CharacterEllipsis" Foreground="#DCDCAA"/>
-      <TextBlock Text="{Binding TargetDetail}" Foreground="#969CA6" FontSize="10" TextTrimming="CharacterEllipsis"/>
+     <Border Background="{Binding TargetBackground}" Padding="6" MinHeight="86">
+     <StackPanel><TextBlock Text="{Binding TargetPath}" ToolTip="{Binding TargetPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
+      <TextBlock Text="{Binding TargetType}" Foreground="#B9C4D1" FontSize="11" TextTrimming="CharacterEllipsis"/>
+      <WrapPanel><TextBlock Text="{Binding TargetDetail}" Foreground="#AAB6C5" FontSize="11" Margin="0,0,8,0"/><TextBlock Text="{Binding TargetSize}" Foreground="#B9C4D1" FontWeight="SemiBold" FontSize="11"/></WrapPanel>
       <TextBlock Text="{Binding TargetValue}" ToolTip="{Binding TargetValue}" TextTrimming="CharacterEllipsis"/>
-      <TextBlock Text="{Binding Node.Difference}" Foreground="{Binding StateColor}" FontSize="11" TextWrapping="Wrap"/>
+      <TextBlock Text="{Binding Node.Difference}" Foreground="#E0DABF" FontSize="11" TextWrapping="Wrap"/>
       <TextBlock Text="{Binding ResultState}" Foreground="{Binding StateColor}" FontSize="11" FontWeight="SemiBold"/>
      </StackPanel>
+     </Border>
     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
    </DataGrid.Columns>
   </DataGrid>
-  <Border Grid.Row="3" Background="#282B30" BorderBrush="#444" BorderThickness="0,1,0,0" Padding="8" IsEnabled="{Binding HasTargetSelection}">
+  <DataGrid x:Name="ViewerGrid" Grid.Row="2" ItemsSource="{Binding ViewerRows}" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}"
+   IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="False"
+   EnableRowVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
+   Background="#20262D" Foreground="#EEEEEE" RowBackground="#242A32" AlternatingRowBackground="#29323C" BorderBrush="#607286" HeadersVisibility="Column" IsEnabled="{Binding CanInteract}">
+   <DataGrid.ColumnHeaderStyle><Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="#353941"/><Setter Property="Foreground" Value="#9CDCFE"/><Setter Property="Padding" Value="8,5"/></Style></DataGrid.ColumnHeaderStyle>
+   <DataGrid.Columns>
+    <DataGridTemplateColumn Header="이름 / 경로" Width="3*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+     <DockPanel Margin="4" ToolTip="{Binding Path}"><Button Content="{Binding ToggleText}" Command="{Binding Owner.ToggleViewerCommand}" CommandParameter="{Binding}" Margin="{Binding Indent}" Width="22" Background="Transparent" Foreground="#DDD" BorderThickness="0"/><TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis"/></DockPanel>
+    </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+    <DataGridTextColumn Header="타입" Binding="{Binding TypeName}" Width="2*"/>
+    <DataGridTextColumn Header="오프셋" Binding="{Binding Offset}" Width="120"/>
+    <DataGridTextColumn Header="크기" Binding="{Binding Size}" Width="90"/>
+    <DataGridTextColumn Header="값" Binding="{Binding Value}" Width="3*"/>
+   </DataGrid.Columns>
+  </DataGrid>
+  <Border Grid.Row="3" Background="#282B30" BorderBrush="#444" BorderThickness="0,1,0,0" Padding="8" IsEnabled="{Binding HasTargetSelection}" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
    <StackPanel>
     <WrapPanel Margin="0,0,0,5">
      <TextBlock Text="선택한 결과 항목 / 그룹: " />

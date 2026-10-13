@@ -45,6 +45,15 @@ public partial class DatInputViewModel : ObservableObject
     public string Pack { get => _pack; set => Change(ref _pack, value); }
     public DatInputViewModel(string label, Func<bool> beforeChange, Func<SctcDataKind> dataKind)
     { Label = label; _beforeChange = beforeChange; _dataKind = dataKind; }
+    public bool HasInput => Headers.Count > 0 || UseSctcPath || DatPath.Length > 0 || StructName.Length > 0 ||
+        IncludeDirectories.Length > 0 || Defines.Length > 0 || Pack != "8";
+    internal void Reset()
+    {
+        Headers.Clear(); SelectedHeader = null;
+        _useSctcPath = false; _datPath = _structName = _includeDirectories = _defines = string.Empty; _pack = "8";
+        foreach (var name in new[] { nameof(UseSctcPath), nameof(DatPath), nameof(StructName), nameof(IncludeDirectories), nameof(Defines), nameof(Pack) })
+            OnPropertyChanged(name);
+    }
     internal void ApplySctcPreset()
     {
         var preset = SctcPreset.Load().ForData(_dataKind());

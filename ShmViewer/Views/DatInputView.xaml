@@ -31,7 +31,7 @@
    <DockPanel Margin="0,5,0,0">
     <TextBlock Text="Struct " Width="52"/><TextBox Text="{Binding StructName, UpdateSourceTrigger=LostFocus}"/>
    </DockPanel>
-   <Expander Header="파싱 옵션 · Windows x64" Foreground="#BBBBBB" Margin="0,5,0,0">
+   <Expander x:Name="OptionsExpander" Header="파싱 옵션 · Windows x64" Foreground="#BBBBBB" Margin="0,5,0,0">
     <StackPanel Margin="0,4,0,0">
      <DockPanel><TextBlock Text="기본 Pack " Width="82"/><TextBox Text="{Binding Pack}" Width="45" HorizontalAlignment="Left"/></DockPanel>
      <TextBlock Text="추가 include 경로 (줄마다 하나)" Margin="0,4,0,2"/>

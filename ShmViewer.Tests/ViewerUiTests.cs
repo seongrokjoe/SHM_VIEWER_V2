@@ -125,6 +125,73 @@ public sealed class ViewerUiTests
     });
 
     [Fact]
+    public Task CheckboxesViewerAndResetRenderAndRespectCancelledChanges() => RunSta(async () =>
+    {
+        using var setup = new DatWorkspaceTests.Inputs();
+        var diff = setup.Model;
+        using var vm = new MainViewModel(new MemoryStore(), _ => true, diff);
+        var window = new MainWindow(vm) { Width = 1440, Height = 900, Left = -12000, Top = -12000, ShowActivated = false };
+        try
+        {
+            window.Show();
+            var tabs = Assert.IsType<TabControl>(window.FindName("WorkspaceTabs")); tabs.SelectedIndex = 1;
+            await diff.DiffCommand.ExecuteAsync(null); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var view = Find<DatDiffView>(window)!;
+            var grid = Assert.IsType<DataGrid>(view.FindName("ComparisonGrid"));
+            CheckBox ChoiceBox(bool left)
+            {
+                var row = diff.Rows.Single(r => r.Node.Path == "choice");
+                grid.ScrollIntoView(row); grid.UpdateLayout();
+                var container = Assert.IsType<DataGridRow>(grid.ItemContainerGenerator.ContainerFromItem(row));
+                return AllVisuals<CheckBox>(container).Single(c => ReferenceEquals(c.Command, left ? diff.CheckLeftCommand : diff.CheckRightCommand));
+            }
+            static void Click(System.Windows.Controls.Primitives.ToggleButton toggle) =>
+                typeof(System.Windows.Controls.Primitives.ToggleButton).GetMethod("OnClick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(toggle, null);
+            Click(ChoiceBox(false)); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.True(ChoiceBox(false).IsChecked); Assert.False(ChoiceBox(true).IsChecked);
+            var chosen = diff.Rows.Single(r => r.Node.Path == "choice");
+            Assert.Equal(chosen.RightBackground, chosen.TargetBackground);
+            grid.SelectedItem = chosen;
+            Render(window, "dat-checkboxes.png");
+            Click(ChoiceBox(false)); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.False(ChoiceBox(false).IsChecked); Assert.Null(chosen.Node.Target);
+            diff.UndoCommand.Execute(null); Assert.True(ChoiceBox(false).IsChecked);
+            diff.SelectedRow = diff.Rows.Single(r => r.Node.Path == "choice"); diff.EditorText = "99";
+            setup.Confirm = false; Click(ChoiceBox(true));
+            Assert.False(ChoiceBox(true).IsChecked); Assert.True(ChoiceBox(false).IsChecked); Assert.Equal("99", diff.EditorText);
+            var mode = Assert.IsType<CheckBox>(view.FindName("LoadOnlyOption"));
+            Click(mode); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.False(mode.IsChecked); Assert.NotNull(diff.Session); Assert.Equal("99", diff.EditorText);
+            setup.Confirm = true; Click(mode);
+            await diff.DiffCommand.ExecuteAsync(null); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var viewer = Assert.IsType<DataGrid>(view.FindName("ViewerGrid"));
+            Assert.False(grid.IsVisible); Assert.True(viewer.IsVisible); Assert.Equal(5, viewer.Columns.Count);
+            Assert.Null(diff.Session); Assert.NotNull(diff.ViewerDocument); Assert.False(diff.CanSave);
+            Assert.False(view.HandleShortcut(Key.Right, ModifierKeys.Control, viewer));
+            diff.ToggleViewerCommand.Execute(diff.ViewerRows.Single(r => r.Node.Field.Path == "items"));
+            Render(window, "dat-load-only.png");
+            window.Width = window.MinWidth; window.Height = window.MinHeight;
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.True(viewer.ActualHeight > 150); Render(window, "dat-load-only-minimum.png");
+            var leftView = Assert.IsType<DatInputView>(view.FindName("LeftInput"));
+            var expander = Assert.IsType<Expander>(leftView.FindName("OptionsExpander")); expander.IsExpanded = true;
+            var confirmations = setup.Confirmations;
+            diff.ResetCommand.Execute(null); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal(confirmations + 1, setup.Confirmations); Assert.False(mode.IsChecked); Assert.False(expander.IsExpanded);
+            Assert.Null(viewer.SelectedItem); Assert.Null(grid.SelectedItem); Assert.Empty(diff.Left.Headers); Assert.Empty(diff.ViewerRows);
+            Assert.True(grid.IsVisible); Assert.False(viewer.IsVisible);
+        }
+        finally { window.Close(); }
+    });
+
+    private static IEnumerable<T> AllVisuals<T>(DependencyObject parent) where T : DependencyObject
+    {
+        if (parent is T value) yield return value;
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            foreach (var child in AllVisuals<T>(VisualTreeHelper.GetChild(parent, i))) yield return child;
+    }
+
+    [Fact]
     public Task RunInitSwitchCancelsOnceAndPreservesBothPresetSelections() => RunSta(async () =>
     {
         var calls = 0;
