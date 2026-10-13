@@ -19,10 +19,13 @@ public sealed class PresetTests
         var store = new MemoryStore();
         using var vm = new MainViewModel(store, _ => true);
         Assert.True(vm.SetDefaultPreset(true)); await vm.Initialization;
-        Assert.Equal(7, vm.HeaderFiles.Count); Assert.Equal(2, vm.HeaderGroups.Count());
+        Assert.Equal(8, vm.HeaderFiles.Count); Assert.Equal(2, vm.HeaderGroups.Count());
         Assert.Equal(6, vm.Tabs.Count);
         Assert.All(vm.Tabs, t => { Assert.Equal(RefreshMode.Ms1000, t.RefreshMode); Assert.False(t.IsRunning); });
         Assert.All(vm.HeaderFiles, f => Assert.Contains("SCTCApplication", f.Path));
+        var recipe = Assert.Single(vm.HeaderFiles, f => f.Name == "_Recipe.h");
+        Assert.Equal(Path.Combine(SctcPreset.Load().HeaderGroups[0].Directory, "_Recipe.h"), recipe.Path);
+        Assert.Contains(recipe.Path, store.State.Headers);
         Assert.Equal("tagRun", vm.Tabs[0].StructName);
         Assert.Equal("OBJECT_INFO_MEMORY", vm.Tabs[5].ShmName);
         Assert.True(store.State.UseDefaultSctcClean);

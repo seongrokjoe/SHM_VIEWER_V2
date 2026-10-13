@@ -2,7 +2,7 @@
 
 ## RealTime Viewer
 
-화면 최상단의 **Use Default SCTC Clean**을 체크하면 SCTC 헤더 7개와 SHM 탭 6개를 설정한다. 기존 설정이 있으면 교체 확인을 받는다. 두 기본 경로 모두 SCTCApplication 철자를 사용한다. 누락 경로·파일은 빨간색으로 유지되며 파일을 준비한 뒤 Refresh로 다시 확인한다.
+화면 최상단의 **Use Default SCTC Clean**을 체크하면 SCTC 헤더 8개와 SHM 탭 6개를 설정한다. 경로1(`D:\K12_SCTC\SCTCApplication\lib\Internal\common\h`)에는 `_Recipe.h`도 포함한다. 기존 설정이 있으면 교체 확인을 받는다. 두 기본 경로 모두 SCTCApplication 철자를 사용한다. 누락 경로·파일은 빨간색으로 유지되며 파일을 준비한 뒤 Refresh로 다시 확인한다.
 
 기본 탭은 Refresh 1초, 정지 상태로 생성·복원된다. 각 탭에서 Run을 눌러야 SHM에 연결한다. 체크 해제에 동의하면 RealTime Viewer 설정만 초기화한다. DAT Diff 작업은 유지된다.
 

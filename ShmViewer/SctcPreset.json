@@ -5,6 +5,7 @@
       "Files": [
         "_DynCfg.h",
         "_enumdef.h",
+        "_Recipe.h",
         "_Run.h",
         "_StcCfg.h",
         "jobinfo.h"
