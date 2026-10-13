@@ -14,7 +14,7 @@
     <Button Content="↓" Command="{Binding MoveHeaderCommand}" CommandParameter="down" Padding="6,0" Margin="4,0"/>
     <TextBlock Text="위에서부터 include" Foreground="#999" FontSize="10"/>
    </DockPanel>
-   <ListBox ItemsSource="{Binding Headers}" SelectedItem="{Binding SelectedHeader}" Height="66" Background="#1E2023" BorderBrush="#444">
+   <ListBox x:Name="HeaderList" ItemsSource="{Binding Headers}" SelectionMode="Extended" SelectionChanged="Headers_SelectionChanged" PreviewKeyDown="Headers_KeyDown" Height="66" Background="#1E2023" BorderBrush="#444">
     <ListBox.ItemTemplate><DataTemplate>
      <TextBlock ToolTip="{Binding Path}">
       <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Foreground" Value="#D4D4D4"/><Style.Triggers>

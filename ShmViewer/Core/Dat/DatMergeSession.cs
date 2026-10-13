@@ -24,6 +24,7 @@ public sealed class DatMergeNode
     public bool IsExpanded { get; set; }
     public bool HasDifference { get; internal set; }
     public bool HasUnresolved { get; internal set; }
+    public bool HasPendingDifference { get; internal set; }
     public int DifferenceCount { get; internal set; }
     public string Difference { get; internal set; } = string.Empty;
     public bool IsUnion => (Target ?? LayoutSource ?? Left ?? Right)?.Type.Kind == BinaryKind.Union;
@@ -232,10 +233,18 @@ public sealed class DatMergeSession
     });
     public void SetValue(DatMergeNode node, string text, string encoding) => Change(() =>
     {
+        if (node.Target == null && HasFixedAncestor(node))
+            throw new InvalidDataException("먼저 배열 요소 또는 union 전체를 결과에 포함하세요.");
         EnsureIncluded(node);
         if (node.Target!.IsContainer && !node.IsUnion) throw new InvalidDataException("구조체·배열은 하위 값을 선택해 편집하세요.");
         Write(node, (bytes, field) => BinaryValueCodec.WriteText(bytes, field, text, encoding), ValueResolution.Manual);
     });
+    private static bool HasFixedAncestor(DatMergeNode node)
+    {
+        for (var parent = node.Parent; parent != null; parent = parent.Parent)
+            if (IsArrayElement(parent) || parent.IsUnion) return true;
+        return false;
+    }
     public void SetZero(IEnumerable<DatMergeNode> nodes) => Change(() =>
     {
         foreach (var node in TopLevel(nodes))
@@ -494,6 +503,10 @@ public sealed class DatMergeSession
             node.Difference = reasons.Count == 0 ? "동일" : string.Join(" · ", reasons);
             node.HasUnresolved = node.Target == null ||
                 !node.IsUnion && !IsArrayElement(node) && node.Children.Any(c => c.HasUnresolved);
+            // A selected fixed layout resolves alternative members absent from that layout.
+            node.HasPendingDifference = BlobOwner(node) == null &&
+                (node.HasDifference && (node.Target == null || node.Target.Type.Size == 0) ||
+                 node.Children.Any(c => c.HasPendingDifference));
             var included = node.Children.Where(c => c.Target != null).ToArray();
             node.AppliedResolution = node.Target == null ? ValueResolution.Unresolved : node.Resolution;
             if (node.Target?.IsContainer == true && !node.IsUnion && included.Length > 0)

@@ -148,7 +148,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             ShmName = entry.ShmName, StructName = entry.StructName, TabTitle = entry.ShmName,
             RefreshMode = Enum.TryParse<RefreshMode>(entry.RefreshMode, out var mode) ? mode : RefreshMode.Ms500,
-            IsStatusError = true, StatusText = "헤더 / 구조체 확인 대기"
+            IsStatusError = false, StatusText = "헤더 분석 준비 중..."
         };
         Tabs.Add(tab);
         SelectedTab ??= tab;
@@ -169,7 +169,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanRefreshHeaders))]
     private void RemoveHeaderFile(HeaderFileEntry file)
     {
-        HeaderFiles.Remove(file); SaveSettings(); Initialization = ParseHeadersAsync();
+        RemoveHeaderFiles(new[] { file });
+    }
+    public void RemoveHeaderFiles(IEnumerable<HeaderFileEntry> files)
+    {
+        if (!CanRefreshHeaders) return;
+        var selected = files.Where(HeaderFiles.Contains).Distinct().ToArray();
+        if (selected.Length == 0) return;
+        foreach (var file in selected) HeaderFiles.Remove(file);
+        SaveSettings(); Initialization = ParseHeadersAsync();
     }
     [RelayCommand(CanExecute = nameof(CanRefreshHeaders))]
     private void ClearAllHeaderFiles()
@@ -194,9 +202,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (paths.Length == 0)
         {
             ParserStatus = HeaderFiles.Count == 0 ? "헤더 파일을 업로드하세요." : "읽을 수 있는 헤더가 없습니다. 빨간색 항목을 확인하세요.";
+            foreach (var tab in Tabs) tab.SetUnavailable(ParserStatus);
             _lastUnresolvedTypes.Clear(); HasLastUnresolved = false; return;
         }
         IsParsing = true; ParserStatus = "파싱 중...";
+        foreach (var tab in Tabs) tab.BeginHeaderLoad();
         try
         {
             var result = await Task.Run(() => new HeaderParserService().Parse(paths));
@@ -204,18 +214,25 @@ public partial class MainViewModel : ObservableObject, IDisposable
             _currentDb = result.Database;
             _lastUnresolvedTypes = result.UnresolvedTypes;
             HasLastUnresolved = _lastUnresolvedTypes.Count > 0;
-            foreach (var tab in Tabs)
+            foreach (var tab in Tabs.ToArray())
             {
+                if (_disposed || version != _parseVersion) return;
+                if (!Tabs.Contains(tab)) continue;
                 var type = _currentDb.ResolveType(tab.StructName);
                 if (type == null) { tab.SetUnavailable($"구조체 '{tab.StructName}' 미발견"); continue; }
-                tab.Initialize(_currentDb, type); tab.BuildTree();
+                tab.Initialize(_currentDb, type); await tab.BuildTreeAsync();
             }
+            if (_disposed || version != _parseVersion) return;
             ParserStatus = $"파싱 완료 — 구조체 {result.Database.Structs.Count}개, 누락 헤더 {HeaderFiles.Count(f => !f.IsAvailable)}개";
             UpdateSearchScopeItems();
         }
         catch (Exception ex)
         {
-            if (version == _parseVersion && !_disposed) ParserStatus = "파싱 오류: " + ex.Message;
+            if (version == _parseVersion && !_disposed)
+            {
+                ParserStatus = "파싱 오류: " + ex.Message;
+                foreach (var tab in Tabs) tab.SetUnavailable(ParserStatus);
+            }
         }
         finally { if (version == _parseVersion && !_disposed) IsParsing = false; }
     }

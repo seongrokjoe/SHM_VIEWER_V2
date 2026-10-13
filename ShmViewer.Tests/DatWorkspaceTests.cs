@@ -33,7 +33,7 @@ public sealed class DatWorkspaceTests
     }
 
     [Fact]
-    public async Task LoadOnlyValidatesOnlyChosenInputAndRemainsReadOnly()
+    public async Task LoadOnlyValidatesOnlyChosenInputAndKeepsSourceImmutable()
     {
         using var setup = new Inputs(); var vm = setup.Model;
         vm.Right.DatPath = "missing.dat"; vm.Right.StructName = "Missing";
@@ -41,7 +41,7 @@ public sealed class DatWorkspaceTests
         Assert.NotNull(vm.ViewerDocument); Assert.Null(vm.Session); Assert.Empty(vm.Rows);
         Assert.Equal("10", vm.ViewerRows.Single(r => r.Node.Field.Path == "choice").Value);
         Assert.Equal(24, vm.ViewerDocument.Schema.Root.Size);
-        Assert.False(vm.CanEdit); Assert.False(vm.CanSave); Assert.False(vm.UseLeftCommand.CanExecute(null));
+        Assert.False(vm.CanEdit); Assert.True(vm.CanEditValues); Assert.True(vm.CanSave); Assert.False(vm.UseLeftCommand.CanExecute(null));
         Assert.False(vm.UndoCommand.CanExecute(null)); Assert.False(vm.MapLeftCommand.CanExecute(null));
         vm.UseLeftCommand.Execute(null); vm.SetZeroCommand.Execute(null); Assert.Null(vm.Session);
         var document = vm.ViewerDocument;

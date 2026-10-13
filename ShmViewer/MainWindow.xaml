@@ -112,7 +112,8 @@
                         <TextBlock Text="헤더 파일" FontWeight="Bold" FontSize="13" Foreground="#9CDCFE" VerticalAlignment="Center"/>
                         <Button Content="+ 파일 추가" Style="{StaticResource DarkBtn}" Margin="10,0,4,0"
                                 Command="{Binding AddHeaderFilesCommand}"/>
-                        <Button Content="전체 삭제" Style="{StaticResource DangerBtn}" Margin="0,0,10,0"
+                        <Button Content="선택 삭제" Style="{StaticResource DangerBtn}" Margin="0,0,4,0" Click="RemoveSelectedHeaders_Click" IsEnabled="{Binding CanRefreshHeaders}"/>
+                         <Button Content="전체 삭제" Style="{StaticResource DangerBtn}" Margin="0,0,10,0"
                                 Command="{Binding ClearAllHeaderFilesCommand}"/>
                         <Button Content="🔄 Refresh" Style="{StaticResource DarkBtn}" Margin="0,0,10,0"
                                 Command="{Binding RefreshHeadersCommand}"
@@ -141,32 +142,28 @@
                     </StackPanel>
                 </Grid>
 
-                <ScrollViewer Grid.Row="1" MaxHeight="120" VerticalScrollBarVisibility="Auto" Margin="0,6,0,0">
-                    <ItemsControl ItemsSource="{Binding HeaderGroups}">
-                        <ItemsControl.ItemTemplate><DataTemplate>
-                            <StackPanel Margin="0,0,0,4">
-                                <TextBlock Text="{Binding Directory}" Foreground="#9CDCFE" FontSize="11"/>
-                                <ItemsControl ItemsSource="{Binding Files}">
-                                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate><DataTemplate>
-                                        <Border Background="#2D2D2D" BorderBrush="#555" BorderThickness="1" Margin="0,3,6,0" Padding="6,3" ToolTip="{Binding Path}">
-                                            <StackPanel Orientation="Horizontal">
-                                                <TextBlock>
-                                                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Foreground" Value="#DCDCAA"/><Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsAvailable}" Value="False"><Setter Property="Foreground" Value="#FF7777"/></DataTrigger>
-                                                    </Style.Triggers></Style></TextBlock.Style>
-                                                    <Run Text="{Binding Name, Mode=OneWay}"/><Run Text=" "/><Run Text="{Binding Error, Mode=OneWay}"/>
-                                                </TextBlock>
-                                                <Button Content="✕" Background="Transparent" Foreground="#888" BorderThickness="0" Margin="6,0,0,0"
-                                                        Command="{Binding DataContext.RemoveHeaderFileCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate></ItemsControl.ItemTemplate>
-                                </ItemsControl>
+                <ListBox x:Name="RealTimeHeaderList" Grid.Row="1" ItemsSource="{Binding HeaderFiles}" SelectionMode="Extended"
+                         PreviewKeyDown="Headers_KeyDown" MaxHeight="120" Margin="0,6,0,0" Background="Transparent" BorderThickness="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.GroupStyle><GroupStyle>
+                        <GroupStyle.HeaderTemplate><DataTemplate><TextBlock Text="{Binding Name}" Foreground="#9CDCFE" FontSize="11" Margin="0,3"/></DataTemplate></GroupStyle.HeaderTemplate>
+                        <GroupStyle.Panel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></GroupStyle.Panel>
+                    </GroupStyle></ListBox.GroupStyle>
+                    <ListBox.ItemTemplate><DataTemplate>
+                        <Border BorderBrush="#555" BorderThickness="1" Margin="0,2,4,2" Padding="6,3" ToolTip="{Binding Path}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock>
+                                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Foreground" Value="#DCDCAA"/><Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsAvailable}" Value="False"><Setter Property="Foreground" Value="#FF7777"/></DataTrigger>
+                                    </Style.Triggers></Style></TextBlock.Style>
+                                    <Run Text="{Binding Name, Mode=OneWay}"/><Run Text=" "/><Run Text="{Binding Error, Mode=OneWay}"/>
+                                </TextBlock>
+                                <Button Content="✕" Background="Transparent" Foreground="#888" BorderThickness="0" Margin="6,0,0,0"
+                                    Command="{Binding DataContext.RemoveHeaderFileCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
                             </StackPanel>
-                        </DataTemplate></ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
+                        </Border>
+                    </DataTemplate></ListBox.ItemTemplate>
+                </ListBox>
             </Grid>
         </Border>
 

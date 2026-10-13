@@ -33,6 +33,15 @@ public partial class DatInputViewModel : ObservableObject
     }
     public ObservableCollection<HeaderFileEntry> Headers { get; } = new();
     [ObservableProperty] private HeaderFileEntry? _selectedHeader;
+    public List<HeaderFileEntry> SelectedHeaders { get; } = new();
+    public bool CanMoveHeader => SelectedHeader != null && SelectedHeaders.Count <= 1;
+    public void SelectHeaders(IEnumerable<HeaderFileEntry> headers)
+    {
+        SelectedHeaders.Clear(); SelectedHeaders.AddRange(headers);
+        SelectedHeader = SelectedHeaders.FirstOrDefault();
+        MoveHeaderCommand.NotifyCanExecuteChanged();
+    }
+    partial void OnSelectedHeaderChanged(HeaderFileEntry? value) => MoveHeaderCommand.NotifyCanExecuteChanged();
     private string _datPath = string.Empty;
     private string _structName = string.Empty;
     private string _includeDirectories = string.Empty;
@@ -49,7 +58,7 @@ public partial class DatInputViewModel : ObservableObject
         IncludeDirectories.Length > 0 || Defines.Length > 0 || Pack != "8";
     internal void Reset()
     {
-        Headers.Clear(); SelectedHeader = null;
+        Headers.Clear(); SelectHeaders(Array.Empty<HeaderFileEntry>());
         _useSctcPath = false; _datPath = _structName = _includeDirectories = _defines = string.Empty; _pack = "8";
         foreach (var name in new[] { nameof(UseSctcPath), nameof(DatPath), nameof(StructName), nameof(IncludeDirectories), nameof(Defines), nameof(Pack) })
             OnPropertyChanged(name);
@@ -58,6 +67,7 @@ public partial class DatInputViewModel : ObservableObject
     {
         var preset = SctcPreset.Load().ForData(_dataKind());
         Headers.Clear();
+        SelectHeaders(Array.Empty<HeaderFileEntry>());
         foreach (var path in preset.Headers) Headers.Add(new(path));
         _datPath = preset.DatPath; _structName = preset.StructName;
         OnPropertyChanged(nameof(DatPath)); OnPropertyChanged(nameof(StructName));
@@ -104,12 +114,16 @@ public partial class DatInputViewModel : ObservableObject
     [RelayCommand]
     private void RemoveHeader()
     {
-        if (SelectedHeader != null && _beforeChange()) { MarkCustom(); Headers.Remove(SelectedHeader); }
+        var selected = SelectedHeaders.Count > 0 ? SelectedHeaders.ToArray() : SelectedHeader == null ? Array.Empty<HeaderFileEntry>() : new[] { SelectedHeader };
+        if (selected.Length == 0 || !_beforeChange()) return;
+        MarkCustom();
+        foreach (var header in selected) Headers.Remove(header);
+        SelectHeaders(Array.Empty<HeaderFileEntry>());
     }
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanMoveHeader))]
     private void MoveHeader(string direction)
     {
-        if (SelectedHeader == null) return;
+        if (!CanMoveHeader || SelectedHeader == null) return;
         var index = Headers.IndexOf(SelectedHeader);
         var next = index + (direction == "up" ? -1 : 1);
         if (next >= 0 && next < Headers.Count && _beforeChange()) { MarkCustom(); Headers.Move(index, next); }

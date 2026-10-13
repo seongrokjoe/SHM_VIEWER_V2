@@ -13,7 +13,7 @@ using Xunit;
 
 namespace ShmViewer.Tests;
 
-public sealed class ViewerUiTests
+public sealed partial class ViewerUiTests
 {
     private sealed class MemoryStore : IRealTimeSettingsStore
     {
@@ -166,7 +166,7 @@ public sealed class ViewerUiTests
             await diff.DiffCommand.ExecuteAsync(null); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             var viewer = Assert.IsType<DataGrid>(view.FindName("ViewerGrid"));
             Assert.False(grid.IsVisible); Assert.True(viewer.IsVisible); Assert.Equal(5, viewer.Columns.Count);
-            Assert.Null(diff.Session); Assert.NotNull(diff.ViewerDocument); Assert.False(diff.CanSave);
+            Assert.Null(diff.Session); Assert.NotNull(diff.ViewerDocument); Assert.True(diff.CanSave);
             Assert.False(view.HandleShortcut(Key.Right, ModifierKeys.Control, viewer));
             diff.ToggleViewerCommand.Execute(diff.ViewerRows.Single(r => r.Node.Field.Path == "items"));
             Render(window, "dat-load-only.png");

@@ -16,6 +16,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private bool _settingEditor;
     private bool _rebuildingRows;
+    internal bool IsRefreshingRows => _rebuildingRows;
     private bool _loadOnly;
     private bool _viewerUsesLeft = true;
     private DatViewerNode? _viewerRoot;
@@ -38,7 +39,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         set
         {
             if (value == _viewerUsesLeft) return;
-            if (IsBusy) { OnPropertyChanged(); OnPropertyChanged(nameof(ViewerUsesRight)); return; }
+            if (IsBusy || LoadOnly && !ConfirmDiscard())
+            { OnPropertyChanged(); OnPropertyChanged(nameof(ViewerUsesRight)); OnPropertyChanged(nameof(ViewerLeftOption)); return; }
             SetProperty(ref _viewerUsesLeft, value); OnPropertyChanged(nameof(ViewerUsesRight)); OnPropertyChanged(nameof(ViewerLeftOption));
             if (LoadOnly) { ClearResults(); Status = "조회할 버전이 변경되었습니다. Load를 다시 실행하세요."; }
         }
@@ -47,7 +49,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     public bool ViewerLeftOption { get => ViewerUsesLeft; set { if (value) ViewerUsesLeft = true; } }
     public DatDocument? ViewerDocument { get; private set; }
     public ObservableCollection<DatViewerRowViewModel> ViewerRows { get; } = new();
-    public string ViewerSummary => ViewerDocument == null ? "DAT 읽기 전용 조회" :
+    public string ViewerSummary => ViewerDocument == null ? "DAT 조회 / 값 편집" :
         $"{(ViewerUsesLeft ? "버전1" : "버전2")} · {ViewerDocument.Schema.StructName} · {ViewerDocument.Schema.Root.Size:N0} bytes · {ViewerDocument.FilePath}";
     public string ExecuteLabel => LoadOnly ? "Load" : "Diff";
     public bool CanInteract => !_disposed && !IsBusy;
@@ -99,7 +101,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     public bool HasTargetSelection => CanEdit && SelectedRow != null;
     public string ResultSummary => Session == null ? "공통 항목을 자동 포함한 뒤 원하는 원본 항목을 추가하세요." :
         $"{Session.Result.Length:N0} bytes · 포함 {Session.IncludedCount:N0}개 · 미포함 {Session.UnresolvedCount:N0}개";
-    public bool CanSave => CanEdit && !HasPendingEdit && string.IsNullOrEmpty(EditorError) && Session?.CanSave == true;
+    public bool CanSave => CanEditValues && !HasPendingEdit && !HasCellEdit && string.IsNullOrEmpty(EditorError) &&
+        (LoadOnly ? ViewerSession != null : Session?.CanSave == true);
     public bool CanDiff => !_disposed && !IsBusy;
     public DatRowViewModel? SelectedRow
     {
@@ -107,6 +110,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         set
         {
             if (_rebuildingRows || ReferenceEquals(value, _selectedRow)) return;
+            if (HasCellEdit && !CommitCellEdit()) { OnPropertyChanged(); return; }
             if (HasPendingEdit && !_confirm("적용하지 않은 입력을 버리고 다른 항목을 선택하시겠습니까?")) { OnPropertyChanged(); return; }
             SetProperty(ref _selectedRow, value); LoadEditor();
         }
@@ -118,7 +122,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         Left = new("버전1", () => InvalidateInput(true), () => DataKind);
         Right = new("버전2", () => InvalidateInput(false), () => DataKind);
     }
-    public bool ConfirmDiscard() => !HasPendingEdit && Session?.IsDirty != true || _confirm("저장하지 않은 DAT 결과·매핑·입력 내용이 사라집니다. 계속하시겠습니까?");
+    public bool ConfirmDiscard() => !HasPendingEdit && !HasCellEdit && Session?.IsDirty != true && ViewerSession?.IsDirty != true ||
+        _confirm("저장하지 않은 DAT 결과·매핑·입력 내용이 사라집니다. 계속하시겠습니까?");
     private bool Invalidate()
     {
         if (IsBusy || !ConfirmDiscard()) return false;
@@ -132,7 +137,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         try
         {
             HasPendingEdit = false; EditorError = string.Empty; _selectedRow = null;
-            Session = null; ViewerDocument = null; _viewerRoot = null;
+            Session = null; ViewerDocument = null; ViewerSession = null; _viewerRoot = null;
+            ClearCellEdit(); _unfilteredExpansion.Clear(); _filterMatches.Clear();
             Rows.Clear(); ViewerRows.Clear(); SelectedNodes.Clear(); LoadEditor();
         }
         finally { _rebuildingRows = false; }
@@ -146,14 +152,25 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         ClearResults(); Left.Reset(); Right.Reset();
         _dataKind = SctcDataKind.Run; _loadOnly = false; _viewerUsesLeft = true;
         DifferencesOnly = false; EncodingName = "ASCII"; ShowHex = false; Status = InitialStatus;
+        ShowViewerPath = ShowViewerType = ShowViewerSize = ShowViewerValue = true; ShowViewerOffset = false;
         OnPropertyChanged(nameof(DataKind)); OnPropertyChanged(nameof(IsRunData)); OnPropertyChanged(nameof(IsInitData));
         OnPropertyChanged(nameof(LoadOnly)); OnPropertyChanged(nameof(ViewerUsesLeft)); OnPropertyChanged(nameof(ViewerUsesRight));
         NotifyState(); ViewResetRequested?.Invoke();
     }
     partial void OnIsBusyChanged(bool value) => NotifyState();
-    partial void OnDifferencesOnlyChanged(bool value) => RebuildRows();
-    partial void OnEncodingNameChanged(string value) { RebuildRows(); RebuildViewerRows(); if (!HasPendingEdit) LoadEditor(); }
-    partial void OnShowHexChanged(bool value) { RebuildRows(); RebuildViewerRows(); if (!HasPendingEdit) LoadEditor(); }
+    private readonly Dictionary<DatMergeNode, bool> _unfilteredExpansion = new();
+    private readonly HashSet<DatMergeNode> _filterMatches = new();
+    partial void OnDifferencesOnlyChanged(bool value)
+    {
+        if (!value)
+        {
+            foreach (var (node, expanded) in _unfilteredExpansion) node.IsExpanded = expanded;
+            _unfilteredExpansion.Clear(); _filterMatches.Clear();
+        }
+        RebuildRows();
+    }
+    partial void OnEncodingNameChanged(string value) { RebuildRows(); RebuildViewerRows(); if (!HasPendingEdit && !HasCellEdit) LoadEditor(); }
+    partial void OnShowHexChanged(bool value) { RebuildRows(); RebuildViewerRows(); if (!HasPendingEdit && !HasCellEdit) LoadEditor(); }
     partial void OnEditorTextChanged(string value)
     {
         if (!_settingEditor && HasTargetSelection) { HasPendingEdit = true; EditorError = string.Empty; }
@@ -183,6 +200,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
             }, token);
             if (_disposed || token.IsCancellationRequested) return;
             Session = session; HasPendingEdit = false; EditorError = string.Empty; _selectedRow = null;
+            ClearCellEdit(); _unfilteredExpansion.Clear(); _filterMatches.Clear();
             RebuildRows(); UpdateSummary();
         }
         catch (OperationCanceledException) { Status = "비교를 취소했습니다."; }
@@ -192,7 +210,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     [RelayCommand] private void Cancel() => _cancellation?.Cancel();
     private async Task LoadViewer()
     {
-        if (!CanInteract || !LoadOnly) return;
+        if (!CanInteract || !LoadOnly || !ConfirmDiscard()) return;
         IsBusy = true; Status = "헤더 파싱 및 DAT 로드 중...";
         _cancellation?.Dispose(); _cancellation = new(); var token = _cancellation.Token;
         try
@@ -206,7 +224,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
             }, token);
             token.ThrowIfCancellationRequested();
             if (_disposed) return;
-            ViewerDocument = document; _viewerRoot = new(document.Root, 0) { IsExpanded = true };
+            ClearCellEdit(); ViewerDocument = document; ViewerSession = new(document);
+            _viewerRoot = new(document.Root, 0) { IsExpanded = true };
             RebuildViewerRows(); Status = ViewerSummary;
         }
         catch (OperationCanceledException) { Status = "로드를 취소했습니다."; }
@@ -215,13 +234,19 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     }
     private void RebuildViewerRows()
     {
-        ViewerRows.Clear();
-        void Add(DatViewerNode node)
+        var rebuilding = _rebuildingRows;
+        _rebuildingRows = true;
+        try
         {
-            ViewerRows.Add(new(this, node));
-            if (node.IsExpanded) foreach (var child in node.Children) Add(child);
+            ViewerRows.Clear();
+            void Add(DatViewerNode node)
+            {
+                ViewerRows.Add(new(this, node));
+                if (node.IsExpanded) foreach (var child in node.Children) Add(child);
+            }
+            if (_viewerRoot != null) Add(_viewerRoot);
         }
-        if (_viewerRoot != null) Add(_viewerRoot);
+        finally { _rebuildingRows = rebuilding; }
     }
     [RelayCommand] private void ToggleViewer(DatViewerRowViewModel row)
     { if (CanInteract && LoadOnly) { row.Node.IsExpanded = !row.Node.IsExpanded; RebuildViewerRows(); } }
@@ -258,15 +283,15 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanEdit))] private void SelectBranch() => Edit(() => { if (SelectedRow != null && SelectedUnionBranch != null) Session?.SelectBranch(SelectedRow.Node, SelectedUnionBranch); });
     [RelayCommand(CanExecute = nameof(CanEdit))] private void ApplyValue() => Edit(() => { if (SelectedRow != null) Session?.SetValue(SelectedRow.Node, EditorText, EncodingName); }, true);
     [RelayCommand(CanExecute = nameof(CanEdit))] private void CancelEdit() { LoadEditor(); RebuildRows(); }
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void Undo() => Edit(() => Session?.Undo());
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void Redo() => Edit(() => Session?.Redo());
+    [RelayCommand(CanExecute = nameof(CanUndo))] private void Undo() => EditHistory(true);
+    [RelayCommand(CanExecute = nameof(CanRedo))] private void Redo() => EditHistory(false);
     private void Edit(Action action, bool applyEditor = false)
     {
         if (!CanEdit) return;
-        if (!applyEditor && HasPendingEdit && !_confirm("적용하지 않은 입력을 버리고 이 작업을 수행하시겠습니까?")) return;
+        if ((!applyEditor && HasPendingEdit || HasCellEdit) && !_confirm("적용하지 않은 입력을 버리고 이 작업을 수행하시겠습니까?")) return;
         try
         {
-            action(); HasPendingEdit = false; EditorError = string.Empty; RebuildRows(); LoadEditor(); UpdateSummary();
+            action(); ClearCellEdit(); HasPendingEdit = false; EditorError = string.Empty; RebuildRows(); LoadEditor(); UpdateSummary();
         }
         catch (Exception ex) { EditorError = ex.Message; }
         NotifyState();
@@ -274,11 +299,12 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanSave))]
     private async Task Save()
     {
-        if (!CanSave || Session == null) return;
-        var dialog = new SaveFileDialog { Filter = "DAT Files|*.dat", DefaultExt = ".dat", FileName = "merged_v3.dat", OverwritePrompt = true };
+        if (!CanSave) return;
+        var dialog = new SaveFileDialog { Filter = "DAT Files|*.dat", DefaultExt = ".dat",
+            FileName = LoadOnly ? Path.GetFileNameWithoutExtension(ViewerDocument!.FilePath) + "_edited.dat" : "merged_v3.dat", OverwritePrompt = true };
         if (dialog.ShowDialog() != true) return;
         IsBusy = true;
-        try { var session = Session; await Task.Run(() => session.Save(dialog.FileName)); Status = "저장 완료: " + dialog.FileName; }
+        try { await Task.Run(() => { if (LoadOnly) ViewerSession!.Save(dialog.FileName); else Session!.Save(dialog.FileName); }); Status = "저장 완료: " + dialog.FileName; }
         catch (Exception ex) { Status = "저장 실패: " + ex.Message; }
         finally { IsBusy = false; }
     }
@@ -302,12 +328,20 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     }
     private void RebuildRows()
     {
+        if (DifferencesOnly && Session != null)
+        {
+            foreach (var node in Session.Nodes) _unfilteredExpansion.TryAdd(node, node.IsExpanded);
+            var matches = Session.Nodes.Where(n => n.HasDifference || n.HasUnresolved).ToHashSet();
+            foreach (var node in matches.Where(n => !_filterMatches.Contains(n)))
+                for (var parent = node.Parent; parent != null; parent = parent.Parent) parent.IsExpanded = true;
+            _filterMatches.Clear(); _filterMatches.UnionWith(matches);
+        }
         var selected = _selectedRow?.Node;
         var editingPath = new HashSet<DatMergeNode>();
-        if (HasPendingEdit)
+        if (HasPendingEdit || CellEditTarget is DatMergeNode)
         {
             // Keep the field being edited visible until its input is applied or cancelled.
-            for (var node = selected; node != null; node = node.Parent)
+            for (var node = CellEditTarget as DatMergeNode ?? selected; node != null; node = node.Parent)
             {
                 editingPath.Add(node);
                 if (node.Parent != null) node.Parent.IsExpanded = true;
@@ -340,6 +374,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanSave)); OnPropertyChanged(nameof(HasTargetSelection)); OnPropertyChanged(nameof(LeftPaths)); OnPropertyChanged(nameof(RightPaths));
         OnPropertyChanged(nameof(CanDiff));
         OnPropertyChanged(nameof(CanInteract)); OnPropertyChanged(nameof(CanEdit)); OnPropertyChanged(nameof(IsDiffMode));
+        OnPropertyChanged(nameof(HasCellEdit)); OnPropertyChanged(nameof(CanEditValues));
+        OnPropertyChanged(nameof(CanUndo)); OnPropertyChanged(nameof(CanRedo)); OnPropertyChanged(nameof(SaveLabel));
         OnPropertyChanged(nameof(ExecuteLabel)); OnPropertyChanged(nameof(ViewerSummary)); OnPropertyChanged(nameof(ViewerLeftOption));
         OnPropertyChanged(nameof(ResultSummary));
         DiffCommand.NotifyCanExecuteChanged(); SaveCommand.NotifyCanExecuteChanged();

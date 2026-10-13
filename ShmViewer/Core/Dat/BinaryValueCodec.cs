@@ -9,6 +9,10 @@ namespace ShmViewer.Core.Dat;
 
 public static class BinaryValueCodec
 {
+    public static string FormatForEdit(byte[] data, BinaryField field, string encoding, bool hex)
+        => field.BitWidth > 0 || field.Type.Kind == BinaryKind.Enum && !hex
+            ? ReadInteger(data, field).ToString(CultureInfo.InvariantCulture)
+            : Format(data, field, encoding, hex);
     private static readonly CultureInfo Culture = CultureInfo.InvariantCulture;
     public static Encoding EncodingFor(string name)
     {

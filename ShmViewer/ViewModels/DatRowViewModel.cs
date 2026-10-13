@@ -4,11 +4,20 @@ using System.Windows;
 
 namespace ShmViewer.ViewModels;
 
-public sealed class DatRowViewModel : ObservableObject
+public sealed class DatRowViewModel : ObservableObject, IDatValueRow
 {
     public DatDiffViewModel Owner { get; }
     public DatMergeNode Node { get; }
     public DatRowViewModel(DatDiffViewModel owner, DatMergeNode node) { Owner = owner; Node = node; }
+    public object EditTarget => Node;
+    public bool CanEditValue => Owner.CanEdit && Node.Target is { IsContainer: false };
+    public string EditableValue => TargetValue;
+    public bool IsCellEditing => ReferenceEquals(Owner.CellEditTarget, Node);
+    internal void RefreshValue()
+    {
+        OnPropertyChanged(nameof(TargetValue)); OnPropertyChanged(nameof(EditableValue));
+        OnPropertyChanged(nameof(IsCellEditing)); OnPropertyChanged(nameof(CanEditValue));
+    }
     public Thickness Indent => new(Math.Min(Node.Depth, 12) * 12, 0, 0, 0);
     public string ToggleText => Node.Children.Count == 0 ? "·" : Node.IsExpanded ? "▼" : "▶";
     public string LeftPath => Node.Left?.Path is { Length: > 0 } p ? p : Node.Left == null ? "—" : Owner.Session!.Left.Schema.StructName;
@@ -56,9 +65,10 @@ public sealed class DatRowViewModel : ObservableObject
     public string ValueColor => ValueDiffers ? "#FFE082" : "#EEEEEE";
     public string TypeColor => Node.DifferenceKinds.HasFlag(DatDifferenceKind.Type) ? "#DFB8FF" : "#B9C4D1";
     private const string Neutral = "#242A32", Common = "#263C35", Version1 = "#203F63", Version2 = "#20503E";
-    public string LeftBackground => Origin == ValueResolution.Automatic ? Common : Origin == ValueResolution.Version1 ? Version1 : Neutral;
-    public string RightBackground => Origin == ValueResolution.Automatic ? Common : Origin == ValueResolution.Version2 ? Version2 : Neutral;
-    public string TargetBackground => Node.Target == null || Node.Target.Type.Size == 0 ? "#4B301C" : Origin switch
+    private bool PendingGroup => Node.Children.Count > 0 && Node.HasPendingDifference;
+    public string LeftBackground => PendingGroup ? "#632D32" : Origin == ValueResolution.Automatic ? Common : Origin == ValueResolution.Version1 ? Version1 : Neutral;
+    public string RightBackground => PendingGroup ? "#632D32" : Origin == ValueResolution.Automatic ? Common : Origin == ValueResolution.Version2 ? Version2 : Neutral;
+    public string TargetBackground => PendingGroup ? "#632D32" : Node.Target == null || Node.Target.Type.Size == 0 ? "#4B301C" : Origin switch
     {
         ValueResolution.Automatic => Common, ValueResolution.Version1 => Version1, ValueResolution.Version2 => Version2,
         ValueResolution.Manual or ValueResolution.Zero => "#463355", _ => "#353A43"

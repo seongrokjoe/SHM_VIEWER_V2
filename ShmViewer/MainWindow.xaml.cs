@@ -57,6 +57,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         _vm = viewModel;
         DataContext = _vm;
+        CollectionViewSource.GetDefaultView(_vm.HeaderFiles).GroupDescriptions.Add(new PropertyGroupDescription(nameof(HeaderFileEntry.Directory)));
         Closing += (_, e) =>
         {
             if (_vm.DatDiff.IsBusy)
@@ -91,6 +92,16 @@ public partial class MainWindow : Window
             _vm.SetDefaultPreset(checkbox.IsChecked == true);
             checkbox.SetCurrentValue(System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty, _vm.UseDefaultSctcClean);
         }
+    }
+
+    private void RemoveSelectedHeaders_Click(object sender, RoutedEventArgs e)
+        => _vm.RemoveHeaderFiles(RealTimeHeaderList.SelectedItems.OfType<HeaderFileEntry>().ToArray());
+
+    private void Headers_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete || !_vm.CanRefreshHeaders) return;
+        _vm.RemoveHeaderFiles(RealTimeHeaderList.SelectedItems.OfType<HeaderFileEntry>().ToArray());
+        e.Handled = true;
     }
 
     private void SetupSearchResultsGrouping()

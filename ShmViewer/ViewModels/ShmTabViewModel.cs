@@ -76,48 +76,76 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         TabTitle = string.IsNullOrEmpty(ShmName) ? StructName : ShmName;
     }
 
+    private sealed record PreparedTree(DataMapper Mapper, TreeNodeViewModel? Root, List<TreeNodeViewModel> Flat,
+        List<SearchEntry> Search, List<string> Unresolved);
+
+    private static PreparedTree PrepareTree(TypeDatabase database, TypeInfo type)
+    {
+        var mapper = new DataMapper(database);
+        var unresolved = mapper.CollectUnresolved(type);
+        if (unresolved.Count > 0) return new(mapper, null, new(), new(), unresolved);
+        var root = mapper.MapEmpty(type);
+        var flat = new List<TreeNodeViewModel>();
+        void Flatten(TreeNodeViewModel node)
+        {
+            if (node.IsPlaceholder) return;
+            flat.Add(node);
+            foreach (var child in node.Children) Flatten(child);
+        }
+        Flatten(root);
+        var search = new List<SearchEntry>();
+        CollectMembers(type, string.Empty, 0, new HashSet<string>(), search);
+        return new(mapper, root, flat, search, unresolved);
+    }
+
+    private void InstallTree(PreparedTree prepared)
+    {
+        _mapper = prepared.Mapper;
+        RootNodes.Clear(); FlatNodes = prepared.Flat; SearchIndex = prepared.Search;
+        UnresolvedTypes = prepared.Unresolved; HasUnresolvedTypes = prepared.Unresolved.Count > 0;
+        IsTreeBuilt = prepared.Root != null;
+        IsStatusError = !IsTreeBuilt;
+        if (prepared.Root != null) RootNodes.Add(prepared.Root);
+        LastRefreshTime = "-";
+        StatusText = IsTreeBuilt ? $"구조체 트리 생성 완료 | Total Size: {_rootType!.TotalSize} bytes"
+            : "미해결 타입이 있습니다. 자세히 보기를 확인하세요.";
+        TabTitle = string.IsNullOrEmpty(ShmName) ? StructName : ShmName;
+    }
+
     [RelayCommand]
     public void BuildTree()
     {
-        if (_rootType == null || _db == null)
-            return;
+        if (_rootType == null || _db == null || _disposed) return;
+        try { InstallTree(PrepareTree(_db, _rootType)); }
+        catch (Exception ex) { IsTreeBuilt = false; IsStatusError = true; StatusText = $"트리 생성 실패: {ex.Message}"; }
+    }
 
+    public void BeginHeaderLoad()
+    {
+        IsStatusError = false; StatusText = "헤더 분석 중...";
+        SetBusy(StatusText);
+    }
+
+    public async Task BuildTreeAsync()
+    {
+        if (_rootType == null || _db == null || _disposed) return;
+        var version = _lifetimeVersion;
+        var database = _db; var type = _rootType;
+        IsStatusError = false; StatusText = "구조체 트리 생성 중..."; SetBusy(StatusText);
         try
         {
-            _mapper = new DataMapper(_db);
-
-            var unresolvedTypes = _mapper.CollectUnresolved(_rootType);
-            if (unresolvedTypes.Count > 0)
-            {
-                IsStatusError = true;
-                StatusText = "미해결 타입이 있습니다. 자세히 보기를 확인하세요.";
-                IsTreeBuilt = false;
-                HasUnresolvedTypes = true;
-                UnresolvedTypes = unresolvedTypes;
-                return;
-            }
-
-            var root = _mapper.MapEmpty(_rootType);
-
-            RootNodes.Clear();
-            RootNodes.Add(root);
-
-            RebuildFlatIndex();
-            BuildSearchIndex();
-
-            IsTreeBuilt = true;
-            IsStatusError = false;
-            HasUnresolvedTypes = false;
-            UnresolvedTypes = new List<string>();
-            LastRefreshTime = "-";
-            StatusText = $"구조체 트리 생성 완료 | Total Size: {_rootType.TotalSize} bytes";
-            TabTitle = string.IsNullOrEmpty(ShmName) ? StructName : ShmName;
+            var prepared = await Task.Run(() => PrepareTree(database, type));
+            if (_disposed || version != _lifetimeVersion) return;
+            InstallTree(prepared);
+            if (SynchronizationContext.Current is System.Windows.Threading.DispatcherSynchronizationContext)
+                await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.ContextIdle);
         }
         catch (Exception ex)
         {
-            IsStatusError = true;
-            StatusText = $"트리 생성 실패: {ex.Message}";
+            if (!_disposed && version == _lifetimeVersion)
+            { IsTreeBuilt = false; IsStatusError = true; StatusText = $"트리 생성 실패: {ex.Message}"; }
         }
+        finally { if (!_disposed && version == _lifetimeVersion) ClearBusy(); }
     }
 
     [RelayCommand]
@@ -326,14 +354,6 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
         _timer = null;
     }
 
-    private void RebuildFlatIndex()
-    {
-        FlatNodes.Clear();
-
-        foreach (var root in RootNodes)
-            FlattenNodes(root, FlatNodes);
-    }
-
     private static void FlattenNodes(TreeNodeViewModel node, List<TreeNodeViewModel> flatList)
     {
         if (node.IsPlaceholder)
@@ -352,15 +372,7 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
             FlattenNodes(child, FlatNodes);
     }
 
-    private void BuildSearchIndex()
-    {
-        SearchIndex = new List<SearchEntry>();
-
-        if (_rootType != null)
-            CollectMembers(_rootType, string.Empty, 0, new HashSet<string>());
-    }
-
-    private void CollectMembers(TypeInfo type, string path, int baseOffset, HashSet<string> visited)
+    private static void CollectMembers(TypeInfo type, string path, int baseOffset, HashSet<string> visited, List<SearchEntry> entries)
     {
         if (!visited.Add(type.Name))
             return;
@@ -377,12 +389,12 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
                 ? $"{member.TypeName}[{member.ArrayCount}]"
                 : member.TypeName;
 
-            SearchIndex.Add(new SearchEntry(displayName, displayType, absOffset, member.Size, fullPath));
+            entries.Add(new SearchEntry(displayName, displayType, absOffset, member.Size, fullPath));
 
             if (member.ResolvedType != null && !member.IsPointer)
             {
                 var subPath = member.ArrayCount > 1 ? $"{fullPath}[n]" : fullPath;
-                CollectMembers(member.ResolvedType, subPath, absOffset, new HashSet<string>(visited));
+                CollectMembers(member.ResolvedType, subPath, absOffset, new HashSet<string>(visited), entries);
             }
         }
     }
