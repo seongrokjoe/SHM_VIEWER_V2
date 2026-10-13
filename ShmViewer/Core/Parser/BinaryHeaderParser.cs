@@ -3,6 +3,7 @@ using ShmViewer.Core.Dat;
 using System.IO;
 using System.Numerics;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace ShmViewer.Core.Parser;
 
@@ -10,6 +11,7 @@ internal sealed class BinaryHeaderParser
 {
     private readonly Dictionary<string, BinaryType> _types = new(StringComparer.Ordinal);
     private readonly HashSet<string> _building = new(StringComparer.Ordinal);
+    private readonly List<(CXCursor Cursor, BinaryType Type)> _records = new();
 
     public unsafe BinarySchema Parse(IEnumerable<string> headers, string structName, HeaderParseOptions options)
     {
@@ -20,7 +22,7 @@ internal sealed class BinaryHeaderParser
         var tempFile = Path.Combine(Path.GetTempPath(), "shm_binary_" + Guid.NewGuid().ToString("N") + ".cpp");
         try
         {
-            File.WriteAllText(tempFile, string.Join("\n", paths.Select(p => "#include \"" + p.Replace('\\', '/') + "\"")), new UTF8Encoding(false));
+            File.WriteAllText(tempFile, $"#pragma pack({options.Pack})\n" + string.Join("\n", paths.Select(p => "#include \"" + p.Replace('\\', '/') + "\"")), new UTF8Encoding(false));
             var args = new List<string> { "-x", "c++", "-std=c++14", "--target=x86_64-pc-windows-msvc", "-fms-extensions", "-fms-compatibility", $"-fpack-struct={options.Pack}" };
             args.AddRange(paths.Select(Path.GetDirectoryName).OfType<string>().Concat(options.IncludeDirectories).Distinct(StringComparer.OrdinalIgnoreCase).Select(p => "-I" + p));
             args.AddRange(options.Defines.Where(d => !string.IsNullOrWhiteSpace(d)).Select(d => "-D" + d));
@@ -62,6 +64,7 @@ internal sealed class BinaryHeaderParser
             Find(tu.Cursor, string.Empty);
             if (rootType == null) throw new InvalidDataException($"Struct '{requested}'을 찾을 수 없습니다.");
             var type = BuildType(rootType.Value);
+            ReadRecordPacking(index, tempFile, args.ToArray());
             if (type.Kind is not (BinaryKind.Record or BinaryKind.Union)) throw new InvalidDataException("Struct에는 구조체 또는 union을 지정하세요.");
             return new(requested, type);
         }
@@ -75,7 +78,7 @@ internal sealed class BinaryHeaderParser
         if (size <= 0) throw new InvalidDataException($"크기를 확정할 수 없는 타입: {original.Spelling}");
         var name = original.Spelling.ToString();
         if (type.kind == CXTypeKind.CXType_ConstantArray)
-            return new BinaryType { Name = name, Kind = BinaryKind.Array, Size = size, Element = BuildType(type.ArrayElementType), Count = checked((int)type.ArraySize) };
+            return new BinaryType { Name = name, Kind = BinaryKind.Array, Size = size, Alignment = checked((int)type.AlignOf), Element = BuildType(type.ArrayElementType), Count = checked((int)type.ArraySize) };
         if (type.kind == CXTypeKind.CXType_Record)
         {
             var declaration = type.Declaration;
@@ -84,7 +87,7 @@ internal sealed class BinaryHeaderParser
             if (_types.TryGetValue(key, out var cached)) return cached;
             if (!type.IsPODType) throw new InvalidDataException("비 POD C++ 객체는 DAT 변환을 지원하지 않습니다: " + name);
             var record = new BinaryType { Name = name, Kind = declaration.Kind == CXCursorKind.CXCursor_UnionDecl ? BinaryKind.Union : BinaryKind.Record,
-                Size = size, Alignment = checked((int)type.AlignOf) };
+                Size = size, Alignment = checked((int)type.AlignOf), ExplicitAlignment = checked((int)declaration.MaxAlignment / 8) };
             _building.Add(key);
             var children = Children(declaration);
             var fields = children.Where(c => c.Kind == CXCursorKind.CXCursor_FieldDecl).ToList();
@@ -93,12 +96,12 @@ internal sealed class BinaryHeaderParser
             {
                 var fieldName = field.Spelling.ToString();
                 var bits = field.IsBitField ? field.FieldDeclBitWidth : 0;
-                if (field.IsBitField && string.IsNullOrEmpty(fieldName)) continue;
+                var padding = field.IsBitField && string.IsNullOrEmpty(fieldName);
                 var bitOffset = field.OffsetOfField;
                 if (bitOffset < 0) throw new InvalidDataException("멤버 오프셋을 확정할 수 없습니다: " + fieldName);
                 var anonymous = string.IsNullOrEmpty(fieldName);
                 if (anonymous) fieldName = $"(anonymous{anonymousOrdinal++})";
-                record.Members.Add(new(fieldName, BuildType(field.Type), checked((int)(bitOffset / 8)), field.IsBitField ? (int)(bitOffset % 8) : 0, bits, anonymous));
+                record.Members.Add(new(fieldName, BuildType(field.Type), checked((int)(bitOffset / 8)), field.IsBitField ? (int)(bitOffset % 8) : 0, bits, anonymous, padding, checked((int)field.MaxAlignment / 8)));
             }
             // Clang can expose promoted anonymous records without a carrier FieldDecl.
             foreach (var child in children.Where(c => c.Kind is CXCursorKind.CXCursor_StructDecl or CXCursorKind.CXCursor_UnionDecl && c.IsAnonymousRecordDecl))
@@ -110,10 +113,13 @@ internal sealed class BinaryHeaderParser
             }
             foreach (var member in record.Members)
             {
-                var length = member.BitWidth > 0 ? (member.BitOffset + member.BitWidth + 7) / 8 : member.Type.Size;
+                var length = member.IsPadding && member.BitWidth == 0 ? 0 : member.BitWidth > 0 ? (member.BitOffset + member.BitWidth + 7) / 8 : member.Type.Size;
                 if (member.Offset < 0 || (long)member.Offset + length > size) throw new InvalidDataException("멤버 범위가 구조체를 벗어납니다: " + member.Name);
             }
-            record.Members.Sort((a, b) => a.Offset.CompareTo(b.Offset));
+            // Stable ordering retains declaration order for shared bitfield/union offsets.
+            var ordered = record.Members.OrderBy(m => m.Offset).ToArray();
+            record.Members.Clear(); record.Members.AddRange(ordered);
+            _records.Add((declaration, record));
             _building.Remove(key); _types[key] = record;
             return record;
         }
@@ -124,13 +130,64 @@ internal sealed class BinaryHeaderParser
             var declaration = type.Declaration;
             var underlying = declaration.EnumDecl_IntegerType.CanonicalType;
             unsigned = Primitive(underlying.kind) == BinaryKind.Unsigned;
-            var result = new BinaryType { Name = name, Kind = BinaryKind.Enum, Size = size, IsUnsigned = unsigned };
+            var result = new BinaryType { Name = name, Kind = BinaryKind.Enum, Size = size, Alignment = checked((int)type.AlignOf), IsUnsigned = unsigned };
             foreach (var item in Children(declaration).Where(c => c.Kind == CXCursorKind.CXCursor_EnumConstantDecl))
                 result.EnumValues[item.Spelling.ToString()] = unsigned ? new BigInteger(item.EnumConstantDeclUnsignedValue) : new BigInteger(item.EnumConstantDeclValue);
             return result;
         }
         if (size > 8) throw new InvalidDataException("지원하지 않는 기본 타입 크기: " + name);
-        return new BinaryType { Name = name, Kind = kind, Size = size, IsUnsigned = unsigned };
+        return new BinaryType { Name = name, Kind = kind, Size = size, Alignment = checked((int)type.AlignOf), IsUnsigned = unsigned };
+    }
+
+    private unsafe void ReadRecordPacking(CXIndex index, string mainFile, string[] args)
+    {
+        // Ask the preprocessor at each declaration, respecting includes, macros and inactive branches.
+        // Unsaved overlays leave the user's headers untouched.
+        var insertions = new Dictionary<string, List<(uint Offset, int Index)>>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < _records.Count; i++)
+        {
+            _records[i].Cursor.Extent.Start.GetExpansionLocation(out var file, out _, out _, out var offset);
+            var path = file.Name.ToString();
+            if (!insertions.TryGetValue(path, out var list)) insertions[path] = list = new();
+            list.Add((offset, i));
+        }
+        var overlays = new List<CXUnsavedFile>();
+        try
+        {
+            foreach (var (path, positions) in insertions)
+            {
+                var bytes = File.ReadAllBytes(path);
+                using var content = new MemoryStream();
+                var previous = 0;
+                foreach (var (offset, id) in positions.OrderBy(p => p.Offset))
+                {
+                    content.Write(bytes, previous, checked((int)offset - previous));
+                    var marker = Encoding.UTF8.GetBytes($" _Pragma(\"message(\\\"SHM_VIEWER_PACK_{id}\\\")\") _Pragma(\"pack(show)\") ");
+                    content.Write(marker); previous = (int)offset;
+                }
+                content.Write(bytes, previous, bytes.Length - previous);
+                overlays.Add(CXUnsavedFile.Create(path, Encoding.UTF8.GetString(content.ToArray())));
+            }
+            using var probe = CXTranslationUnit.Parse(index, mainFile, args, overlays.ToArray(), CXTranslationUnit_Flags.CXTranslationUnit_SkipFunctionBodies);
+            var current = -1;
+            var found = new HashSet<int>();
+            for (uint i = 0; i < probe.NumDiagnostics; i++)
+            {
+                using var diagnostic = probe.GetDiagnostic(i);
+                var text = diagnostic.Spelling.ToString();
+                var marker = Regex.Match(text, @"^SHM_VIEWER_PACK_(\d+)$");
+                if (marker.Success) { current = int.Parse(marker.Groups[1].Value); continue; }
+                var pack = Regex.Match(text, @"#pragma pack\(show\) == (\d+)");
+                if (current >= 0 && pack.Success)
+                {
+                    _records[current].Type.Pack = int.Parse(pack.Groups[1].Value);
+                    found.Add(current); current = -1;
+                }
+            }
+            if (found.Count != _records.Count)
+                throw new InvalidDataException("일부 구조체의 pack을 확인할 수 없습니다. 헤더의 구조체 선언 및 매크로를 확인하세요.");
+        }
+        finally { foreach (var overlay in overlays) overlay.Dispose(); }
     }
     private static int FindAnonymousOffset(CXType outer, CXType inner, int innerOffset)
     {

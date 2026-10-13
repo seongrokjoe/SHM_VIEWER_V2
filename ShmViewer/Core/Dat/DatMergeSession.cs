@@ -6,55 +6,62 @@ public enum ValueResolution { Unresolved, Automatic, Version1, Version2, Manual,
 
 public sealed class DatMergeNode
 {
+    // Original comparison identity is independent of compacted result array indices.
     public string Path { get; init; } = string.Empty;
-    public BinaryField? Left { get; set; }
-    public BinaryField? Right { get; set; }
-    public BinaryField? Target { get; init; }
+    public string Key { get; init; } = string.Empty;
+    public BinaryField? Left { get; internal set; }
+    public BinaryField? Right { get; internal set; }
+    public BinaryField? Target { get; internal set; }
     public DatMergeNode? Parent { get; init; }
     public List<DatMergeNode> Children { get; } = new();
-    public ValueResolution Resolution { get; set; }
-    public string? ActiveUnionBranch { get; set; }
+    public ValueResolution Resolution { get; internal set; }
+    public string? ActiveUnionBranch { get; internal set; }
     public bool IsExpanded { get; set; }
-    public bool HasDifference { get; set; }
-    public bool HasUnresolved { get; set; }
-    public string Difference { get; set; } = string.Empty;
-    public bool IsUnion => Target?.Type.Kind == BinaryKind.Union;
-    public bool IsResultLeaf => Target != null && (!Target.IsContainer || IsUnion && ActiveUnionBranch == null);
+    public bool HasDifference { get; internal set; }
+    public bool HasUnresolved { get; internal set; }
+    public int DifferenceCount { get; internal set; }
+    public string Difference { get; internal set; } = string.Empty;
+    public bool IsUnion => (Target ?? LayoutSource ?? Left ?? Right)?.Type.Kind == BinaryKind.Union;
+    public bool IsResultLeaf => Target != null && (!Target.IsContainer || IsUnion);
     public int Depth => Parent == null ? 0 : Parent.Depth + 1;
+    internal BinaryField? LayoutSource { get; set; }
+    internal byte[]? ValueBytes { get; set; }
+    internal BinaryType? ResultType { get; set; }
 }
 
 public sealed class DatMergeSession
 {
     public DatDocument Left { get; }
     public DatDocument Right { get; }
-    public BinarySchema? TargetSchema { get; }
-    public byte[] Result { get; private set; }
+    public BinarySchema TargetSchema { get; private set; } = null!;
+    public byte[] Result { get; private set; } = Array.Empty<byte>();
     public DatMergeNode Root { get; }
     public IReadOnlyList<DatMergeNode> Nodes => _nodes;
     public IReadOnlyDictionary<string, BinaryField> LeftFields { get; }
     public IReadOnlyDictionary<string, BinaryField> RightFields { get; }
+    public int IncludedCount { get; private set; }
     public int UnresolvedCount { get; private set; }
     public bool IsDirty { get; private set; }
-    public bool CanSave => TargetSchema != null && UnresolvedCount == 0;
+    public bool CanSave => Result.Length > 0;
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
     private readonly List<DatMergeNode> _nodes = new();
     private readonly List<Snapshot> _undo = new();
     private readonly List<Snapshot> _redo = new();
-    private sealed record NodeState(BinaryField? Left, BinaryField? Right, ValueResolution Resolution, string? Branch);
-    private sealed record Snapshot(byte[] Data, NodeState[] Nodes, bool Dirty);
+    private sealed record NodeState(DatMergeNode Node, BinaryField? Left, BinaryField? Right,
+        BinaryField? Layout, byte[]? Bytes, ValueResolution Resolution, string? Branch, DatMergeNode[] Children);
+    private sealed record Snapshot(NodeState[] Nodes, bool Dirty);
 
-    public DatMergeSession(DatDocument left, DatDocument right, BinarySchema? target, CancellationToken cancellationToken = default)
+    public DatMergeSession(DatDocument left, DatDocument right, CancellationToken cancellationToken = default)
     {
-        Left = left; Right = right; TargetSchema = target;
-        Result = new byte[target?.Root.Size ?? 0];
+        Left = left; Right = right;
         LeftFields = Index(left.Root, cancellationToken); RightFields = Index(right.Root, cancellationToken);
-        Root = Build(left.Root, right.Root, target == null ? null : new BinaryField(string.Empty, target.Root, 0), null, string.Empty, cancellationToken);
+        Root = Build(left.Root, right.Root, null, string.Empty, cancellationToken);
         Root.IsExpanded = true;
         Initialize(Root, cancellationToken);
-        IsDirty = target != null;
-        Refresh();
+        Rebuild(); IsDirty = true;
     }
+
     private static Dictionary<string, BinaryField> Index(BinaryField root, CancellationToken token)
     {
         var result = new Dictionary<string, BinaryField>(StringComparer.Ordinal);
@@ -65,155 +72,304 @@ public sealed class DatMergeSession
         }
         Add(root); return result;
     }
-    private DatMergeNode Build(BinaryField? left, BinaryField? right, BinaryField? target, DatMergeNode? parent, string path, CancellationToken token)
+    private static string ChildKey(BinaryField parent, BinaryField child) => child.Path[parent.Path.Length..].TrimStart('.');
+    private static string Join(string parent, string key) => parent.Length == 0 ? key : parent + (key.StartsWith('[') ? "" : ".") + key;
+    private static bool IsArrayElement(DatMergeNode node) => node.Parent != null && node.Key.StartsWith('[');
+    private DatMergeNode Build(BinaryField? left, BinaryField? right, DatMergeNode? parent, string key, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var node = new DatMergeNode { Path = path, Left = left, Right = right, Target = target, Parent = parent };
+        var node = new DatMergeNode { Path = parent == null ? "" : Join(parent.Path, key), Key = key, Left = left, Right = right, Parent = parent };
         _nodes.Add(node);
-        static Dictionary<string, BinaryField> Children(BinaryField? field) => field?.Children()
-            .ToDictionary(c => c.Path[field.Path.Length..], StringComparer.Ordinal) ?? new();
-        var a = Children(left); var b = Children(right); var c = Children(target);
-        foreach (var key in c.Keys.Concat(a.Keys).Concat(b.Keys).Distinct(StringComparer.Ordinal))
+        var a = left?.Children().ToDictionary(c => ChildKey(left, c)) ?? new();
+        var b = right?.Children().ToDictionary(c => ChildKey(right, c)) ?? new();
+        foreach (var name in a.Keys.Concat(b.Keys).Distinct(StringComparer.Ordinal))
         {
-            a.TryGetValue(key, out var av); b.TryGetValue(key, out var bv); c.TryGetValue(key, out var cv);
-            node.Children.Add(Build(av, bv, cv, node, path + key, token));
+            a.TryGetValue(name, out var av); b.TryGetValue(name, out var bv);
+            node.Children.Add(Build(av, bv, node, name, token));
         }
         return node;
+    }
+    private static bool SameValue(byte[] a, BinaryField left, byte[] b, BinaryField right)
+    {
+        if (left.Signature != right.Signature) return false;
+        if (left.Type.Kind == BinaryKind.Record || left.Type.Kind == BinaryKind.Array && !left.Type.IsText)
+        {
+            var ac = left.Children().ToArray(); var bc = right.Children().ToArray();
+            return ac.Length == bc.Length && ac.Zip(bc).All(p => SameValue(a, p.First, b, p.Second));
+        }
+        return BinaryValueCodec.Equal(a, left, b, right);
     }
     private void Initialize(DatMergeNode node, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (node.Target == null) return;
-        if (node.IsUnion || !node.Target.IsContainer)
+        if (node.Left == null || node.Right == null) return;
+        var a = node.Left; var b = node.Right;
+        if (IsArrayElement(node) || a.Type.Kind == BinaryKind.Union || !a.IsContainer || !a.Children().Any() || a.Type.Kind != b.Type.Kind)
         {
-            if (node.Left != null && node.Right != null && node.Left.Signature == node.Target.Signature &&
-                BinaryValueCodec.Equal(Left.Data, node.Left, Right.Data, node.Right))
+            if (SameValue(Left.Data, a, Right.Data, b)) IncludeAtomic(node, a, Left.Data, ValueResolution.Automatic);
+            return;
+        }
+        node.LayoutSource = a;
+        foreach (var child in node.Children) Initialize(child, token);
+    }
+    private static BinaryField Local(BinaryField field) => new("", field.Type, 0, 0, field.BitWidth);
+    private static void IncludeAtomic(DatMergeNode node, BinaryField source, byte[] data, ValueResolution resolution)
+    {
+        Clear(node); node.LayoutSource = source;
+        var bytes = new byte[source.Type.Size];
+        BinaryValueCodec.CopyConverted(data, source, bytes, Local(source));
+        node.ValueBytes = bytes; node.Resolution = resolution;
+    }
+    private static void Clear(DatMergeNode node)
+    {
+        node.LayoutSource = null; node.ValueBytes = null; node.Resolution = ValueResolution.Unresolved;
+        node.ActiveUnionBranch = null;
+        foreach (var child in node.Children) Clear(child);
+    }
+    private static DatMergeNode? BlobOwner(DatMergeNode node)
+    {
+        for (var current = node; current != null; current = current.Parent)
+            if (current.ValueBytes != null) return current;
+        return null;
+    }
+
+    public void ApplySource(IEnumerable<DatMergeNode> nodes, bool useLeft) => Change(() =>
+    {
+        foreach (var node in TopLevel(nodes))
+        {
+            if ((useLeft ? node.Left : node.Right) == null) continue;
+            DatMergeNode? fixedParent = null;
+            for (var p = node.Parent; p != null; p = p.Parent)
+                if ((IsArrayElement(p) || p.IsUnion) && p.Target == null) fixedParent = p;
+            if (fixedParent != null) { Apply(fixedParent, useLeft); Rebuild(); }
+            Apply(node, useLeft); Rebuild();
+        }
+    });
+    private void Apply(DatMergeNode node, bool useLeft)
+    {
+        var source = useLeft ? node.Left : node.Right;
+        if (source == null) return;
+        var data = useLeft ? Left.Data : Right.Data;
+        var resolution = useLeft ? ValueResolution.Version1 : ValueResolution.Version2;
+        var owner = node.Parent == null ? null : BlobOwner(node.Parent);
+        if (owner != null)
+        {
+            if (node.Target == null) throw new InvalidDataException("채택한 배열 요소/union 구조에 없는 멤버입니다. 구조 전체를 선택하세요.");
+            var bytes = (byte[])owner.ValueBytes!.Clone();
+            BinaryValueCodec.CopyConverted(data, source, bytes, node.Target with { Offset = node.Target.Offset - owner.Target!.Offset });
+            owner.ValueBytes = bytes; owner.Resolution = resolution; Activate(node);
+            return;
+        }
+        if (IsArrayElement(node) || !source.IsContainer || !source.Children().Any() || source.Type.Kind == BinaryKind.Union)
+        {
+            IncludeAtomic(node, source, data, resolution); return;
+        }
+        if (source.Type.Kind == BinaryKind.Array)
+        {
+            Clear(node); node.LayoutSource = source;
+            foreach (var child in node.Children)
             {
-                BinaryValueCodec.CopyConverted(Left.Data, node.Left, Result, node.Target);
-                node.Resolution = ValueResolution.Automatic;
+                var element = useLeft ? child.Left : child.Right;
+                if (element != null) IncludeAtomic(child, element, data, resolution);
             }
             return;
         }
-        foreach (var child in node.Children) Initialize(child, token);
+        if (node.ValueBytes != null || node.LayoutSource?.Type.Kind != BinaryKind.Record) Clear(node);
+        node.LayoutSource = node.Left?.Type.Kind == BinaryKind.Record ? node.Left : source;
+        foreach (var child in node.Children) Apply(child, useLeft);
     }
+    public void Remove(IEnumerable<DatMergeNode> nodes) => Change(() =>
+    {
+        foreach (var node in TopLevel(nodes))
+        {
+            if (node.Parent != null && BlobOwner(node.Parent) != null)
+                throw new InvalidDataException("배열 요소/union의 내부 멤버는 제거할 수 없습니다. 요소 또는 union 전체를 제거하세요.");
+            Clear(node);
+        }
+    });
+    public void SetValue(DatMergeNode node, string text, string encoding) => Change(() =>
+    {
+        EnsureIncluded(node);
+        if (node.Target!.IsContainer && !node.IsUnion) throw new InvalidDataException("구조체·배열은 하위 값을 선택해 편집하세요.");
+        Write(node, (bytes, field) => BinaryValueCodec.WriteText(bytes, field, text, encoding), ValueResolution.Manual);
+    });
+    public void SetZero(IEnumerable<DatMergeNode> nodes) => Change(() =>
+    {
+        foreach (var node in TopLevel(nodes))
+        {
+            EnsureIncluded(node);
+            void Zero(DatMergeNode current)
+            {
+                if (current.Target == null) return;
+                if (BlobOwner(current) != null)
+                    Write(current, (bytes, field) =>
+                    {
+                        if (field.BitWidth > 0) BinaryValueCodec.WriteInteger(bytes, field, 0);
+                        else bytes.AsSpan(field.Offset, field.ByteLength).Clear();
+                    }, ValueResolution.Zero);
+                else foreach (var child in current.Children) Zero(child);
+            }
+            Zero(node);
+        }
+    });
+    private void EnsureIncluded(DatMergeNode node)
+    {
+        if (node.Target != null) return;
+        var ancestor = node;
+        for (var p = node.Parent; p != null; p = p.Parent)
+            if (IsArrayElement(p) || p.IsUnion) ancestor = p;
+        Apply(ancestor, ancestor.Left != null); Rebuild();
+        if (node.Target == null) throw new InvalidDataException("먼저 원본 항목을 결과에 추가하세요.");
+    }
+    private void Write(DatMergeNode node, Action<byte[], BinaryField> write, ValueResolution resolution)
+    {
+        var owner = BlobOwner(node) ?? throw new InvalidDataException("편집할 값을 선택하세요.");
+        var bytes = (byte[])owner.ValueBytes!.Clone();
+        var field = ReferenceEquals(owner, node) ? Local(owner.LayoutSource!) : node.Target! with { Offset = node.Target!.Offset - owner.Target!.Offset };
+        write(bytes, field); owner.ValueBytes = bytes; owner.Resolution = resolution; Activate(node);
+    }
+    private static void Activate(DatMergeNode node)
+    {
+        for (var current = node; current.Parent != null; current = current.Parent)
+            if (current.Parent.IsUnion) current.Parent.ActiveUnionBranch = current.Path;
+    }
+    public void SelectBranch(DatMergeNode union, DatMergeNode branch) => Change(() =>
+    {
+        if (!union.IsUnion || branch.Parent != union) throw new InvalidDataException("union 멤버를 선택하세요.");
+        EnsureIncluded(union);
+        if (branch.Target == null) throw new InvalidDataException("선택한 union 구조에 없는 멤버입니다.");
+        Activate(branch);
+    });
     public bool IsActive(DatMergeNode node)
     {
         if (node.Target == null) return false;
         for (var current = node; current.Parent != null; current = current.Parent)
-        {
-            var parent = current.Parent;
-            if (parent.Target != null && !parent.Target.IsContainer) return false;
-            if (parent.IsUnion && parent.ActiveUnionBranch != current.Path) return false;
-        }
+            if (current.Parent.IsUnion && current.Parent.ActiveUnionBranch != current.Path) return false;
         return true;
     }
-    private void Activate(DatMergeNode node)
-    {
-        if (node.Parent != null)
-        {
-            Activate(node.Parent);
-            if (node.Parent.IsUnion && node.Parent.ActiveUnionBranch != node.Path)
-            {
-                Clear(node.Parent);
-                node.Parent.ActiveUnionBranch = node.Path;
-            }
-        }
-    }
-    private void Clear(DatMergeNode node)
-    {
-        if (node.Target != null)
-        {
-            if (node.Target.BitWidth > 0) BinaryValueCodec.WriteInteger(Result, node.Target, 0);
-            else Result.AsSpan(node.Target.Offset, node.Target.ByteLength).Clear();
-        }
-        void Reset(DatMergeNode n)
-        {
-            n.Resolution = ValueResolution.Unresolved; n.ActiveUnionBranch = null;
-            foreach (var child in n.Children) Reset(child);
-        }
-        Reset(node);
-    }
-    public void SelectBranch(DatMergeNode union, DatMergeNode branch) => Change(() =>
-    {
-        if (!union.IsUnion || branch.Parent != union || branch.Target == null) throw new InvalidDataException("union 멤버를 선택하세요.");
-        Activate(branch);
-    });
-    public void SetValue(DatMergeNode node, string text, string encoding) => Change(() =>
-    {
-        if (node.Target == null) throw new InvalidDataException("버전3 대상 필드를 선택하세요.");
-        Activate(node);
-        if (node.Target.IsContainer && !node.IsUnion) throw new InvalidDataException("구조체는 하위 필드에서 편집하세요.");
-        BinaryValueCodec.WriteText(Result, node.Target, text, encoding);
-        node.Resolution = ValueResolution.Manual;
-        if (node.IsUnion) node.ActiveUnionBranch = null;
-    });
-    public void ApplySource(IEnumerable<DatMergeNode> nodes, bool useLeft) => Change(() =>
-    {
-        foreach (var node in TopLevel(nodes)) { Activate(node); Apply(node, useLeft); }
-    });
-    private void Apply(DatMergeNode node, bool useLeft)
-    {
-        if (node.Target == null) return;
-        var source = useLeft ? node.Left : node.Right;
-        if (node.IsUnion || !node.Target.IsContainer)
-        {
-            if (source == null) return;
-            BinaryValueCodec.CopyConverted(useLeft ? Left.Data : Right.Data, source, Result, node.Target);
-            node.Resolution = useLeft ? ValueResolution.Version1 : ValueResolution.Version2;
-            if (node.IsUnion) node.ActiveUnionBranch = null;
-            return;
-        }
-        foreach (var child in node.Children) Apply(child, useLeft);
-    }
-    public void SetZero(IEnumerable<DatMergeNode> nodes) => Change(() =>
-    {
-        void Zero(DatMergeNode node)
-        {
-            if (node.Target == null) return;
-            if (node.IsUnion || !node.Target.IsContainer) { Clear(node); node.Resolution = ValueResolution.Zero; }
-            else foreach (var child in node.Children) Zero(child);
-        }
-        foreach (var node in TopLevel(nodes)) { Activate(node); Zero(node); }
-    });
     public void Map(DatMergeNode node, bool useLeft, string sourcePath) => Change(() =>
     {
-        if (node.Target == null) throw new InvalidDataException("버전3 대상 필드를 선택하세요.");
         var fields = useLeft ? LeftFields : RightFields;
         if (!fields.TryGetValue(sourcePath, out var source)) throw new InvalidDataException("원본 경로를 찾을 수 없습니다: " + sourcePath);
-        Activate(node); Clear(node);
-        void Assign(DatMergeNode current)
+        if (node.Parent != null && BlobOwner(node.Parent) != null)
+            throw new InvalidDataException("배열 요소/union 내부 연결은 구조 전체에서 지정하세요.");
+        Clear(node);
+        void Assign(DatMergeNode current, BinaryField? field)
         {
-            var relative = current.Path[node.Path.Length..].TrimStart('.');
-            var path = relative.Length == 0 ? source.Path : source.Path.Length == 0 ? relative :
-                source.Path + (relative.StartsWith('[') ? "" : ".") + relative;
-            fields.TryGetValue(path, out var match);
-            if (useLeft) current.Left = match; else current.Right = match;
-            foreach (var child in current.Children) Assign(child);
+            if (useLeft) current.Left = field; else current.Right = field;
+            var children = field?.Children().ToDictionary(c => ChildKey(field, c)) ?? new();
+            foreach (var child in current.Children) { children.TryGetValue(child.Key, out var match); Assign(child, match); }
+            foreach (var orphan in current.Children.Where(c => c.Left == null && c.Right == null).ToArray())
+            {
+                void RemoveIndex(DatMergeNode removed)
+                {
+                    foreach (var nested in removed.Children) RemoveIndex(nested);
+                    _nodes.Remove(removed);
+                }
+                RemoveIndex(orphan); current.Children.Remove(orphan);
+            }
+            foreach (var (key, value) in children)
+                if (!current.Children.Any(c => c.Key == key)) current.Children.Add(Build(useLeft ? value : null, useLeft ? null : value, current, key, default));
         }
-        Assign(node);
+        Assign(node, source);
     });
+
+    private BinaryType? Compose(DatMergeNode node)
+    {
+        if (node.ValueBytes != null) return node.ResultType = node.LayoutSource!.Type;
+        var children = node.Children.Select(c => (Node: c, Type: Compose(c))).Where(p => p.Type != null).ToList();
+        if (children.Count == 0) return node.ResultType = null;
+        var template = node.LayoutSource ?? node.Left ?? node.Right!;
+        if (template.Type.Kind == BinaryKind.Array)
+        {
+            var element = children[0].Type!;
+            if (children.Any(p => p.Type!.Signature != element.Signature || p.Type.Alignment != element.Alignment))
+                throw new InvalidDataException($"{node.Path}: 서로 다른 구조의 배열 요소를 혼합할 수 없습니다. 버전1 또는 버전2 배열 전체를 적용하세요.");
+            return node.ResultType = BinaryLayoutBuilder.Array(element, children.Count);
+        }
+        if (template.Type.Kind != BinaryKind.Record)
+            throw new InvalidDataException($"{node.Path}: 이 항목은 구조 전체를 먼저 선택하세요.");
+        var members = new List<BinaryMember>();
+        foreach (var child in node.Children.Where(c => c.ResultType != null))
+        {
+            var source = child.LayoutSource ?? child.Left ?? child.Right!;
+            var definition = (source == child.Right ? node.Right : node.Left)?.Type.Members.FirstOrDefault(m => m.Name == child.Key)
+                ?? template.Type.Members.FirstOrDefault(m => m.Name == child.Key);
+            members.Add(new(child.Key, child.ResultType!, 0, BitWidth: source.BitWidth, ExplicitAlignment: definition?.ExplicitAlignment ?? 0));
+        }
+        // Preserve unnamed bitfield storage and barriers in their original declaration slots.
+        foreach (var padding in template.Type.Members.Where(m => m.IsPadding))
+        {
+            var index = template.Type.Members.IndexOf(padding);
+            var following = template.Type.Members.Skip(index + 1).FirstOrDefault(m => members.Any(x => x.Name == m.Name));
+            if (following != null) members.Insert(members.FindIndex(m => m.Name == following.Name), padding);
+            else if (members.Count > 0) members.Add(padding);
+        }
+        return node.ResultType = BinaryLayoutBuilder.Record(template.Type, members);
+    }
+    private void Rebuild()
+    {
+        foreach (var node in _nodes) { node.Target = null; node.ResultType = null; }
+        var type = Compose(Root) ?? new BinaryType { Name = Left.Schema.StructName, Kind = BinaryKind.Record, Size = 0 };
+        TargetSchema = new(Left.Schema.StructName, type);
+        Result = new byte[type.Size];
+        void Bind(DatMergeNode node, BinaryField field)
+        {
+            node.Target = field;
+            if (node.ValueBytes != null)
+            {
+                BinaryValueCodec.CopyConverted(node.ValueBytes, Local(node.LayoutSource!), Result, field);
+                BindFixed(node, field, node.Resolution); return;
+            }
+            var children = field.Children().ToArray();
+            var included = node.Children.Where(c => c.ResultType != null).ToArray();
+            for (var i = 0; i < included.Length; i++)
+            {
+                var target = field.Type.Kind == BinaryKind.Array ? children[i] : children.Single(c => ChildKey(field, c) == included[i].Key);
+                Bind(included[i], target);
+            }
+        }
+        void BindFixed(DatMergeNode node, BinaryField field, ValueResolution resolution)
+        {
+            foreach (var childField in field.Children())
+            {
+                var child = node.Children.FirstOrDefault(c => c.Key == ChildKey(field, childField));
+                if (child == null) continue;
+                child.Target = childField; child.Resolution = resolution;
+                BindFixed(child, childField, resolution);
+            }
+        }
+        Bind(Root, new("", type, 0));
+        Refresh();
+    }
     private static IEnumerable<DatMergeNode> TopLevel(IEnumerable<DatMergeNode> nodes)
     {
-        var selected = nodes.Where(n => n.Target != null).ToHashSet();
-        return selected.Where(n => { for (var p = n.Parent; p != null; p = p.Parent) if (selected.Contains(p)) return false; return true; });
+        var selected = nodes.ToHashSet();
+        return selected.Where(n => { for (var p = n.Parent; p != null; p = p.Parent) if (selected.Contains(p)) return false; return true; })
+            .OrderBy(n => n.Path, StringComparer.Ordinal).ToArray();
     }
-    private Snapshot Capture() => new((byte[])Result.Clone(), _nodes.Select(n => new NodeState(n.Left, n.Right, n.Resolution, n.ActiveUnionBranch)).ToArray(), IsDirty);
+    private Snapshot Capture() => new(_nodes.Select(n => new NodeState(n, n.Left, n.Right, n.LayoutSource,
+        n.ValueBytes, n.Resolution, n.ActiveUnionBranch, n.Children.ToArray())).ToArray(), IsDirty);
     private void Restore(Snapshot state)
     {
-        Result = (byte[])state.Data.Clone();
-        for (var i = 0; i < _nodes.Count; i++)
-        { var n = _nodes[i]; var s = state.Nodes[i]; n.Left = s.Left; n.Right = s.Right; n.Resolution = s.Resolution; n.ActiveUnionBranch = s.Branch; }
-        IsDirty = state.Dirty; Refresh();
+        _nodes.Clear();
+        foreach (var s in state.Nodes)
+        {
+            var n = s.Node; _nodes.Add(n); n.Left = s.Left; n.Right = s.Right; n.LayoutSource = s.Layout;
+            n.ValueBytes = s.Bytes; n.Resolution = s.Resolution; n.ActiveUnionBranch = s.Branch;
+            n.Children.Clear(); n.Children.AddRange(s.Children);
+        }
+        IsDirty = state.Dirty; Rebuild();
     }
-    private void Change(Action change)
+    private void Change(Action action)
     {
         var before = Capture();
-        try { change(); }
+        try { action(); Rebuild(); }
         catch { Restore(before); throw; }
         _undo.Add(before); _redo.Clear();
-        var limit = Math.Max(1, Math.Min(30, 32 * 1024 * 1024 / Math.Max(1, Result.Length + _nodes.Count * 48)));
+        var limit = Math.Max(1, Math.Min(30, 32 * 1024 * 1024 / Math.Max(1L, Result.LongLength + _nodes.Count * 100L)));
         while (_undo.Count > limit) _undo.RemoveAt(0);
-        IsDirty = true; Refresh();
+        IsDirty = true;
     }
     public void Undo()
     {
@@ -226,28 +382,53 @@ public sealed class DatMergeSession
     public void MarkSaved()
     {
         IsDirty = false;
-        // An undo after saving must still prompt before discarding the restored version.
         for (var i = 0; i < _undo.Count; i++) _undo[i] = _undo[i] with { Dirty = true };
         for (var i = 0; i < _redo.Count; i++) _redo[i] = _redo[i] with { Dirty = true };
     }
     public void Save(string path)
     {
-        if (!CanSave) throw new InvalidDataException($"버전3 미해결 항목 {UnresolvedCount}개를 먼저 처리하세요.");
+        if (!CanSave) throw new InvalidDataException("버전3에 저장할 항목을 먼저 추가하세요.");
         DatDocument.SaveAtomic(path, Result, Left.FilePath, Right.FilePath); MarkSaved();
     }
     public void Refresh()
     {
-        UnresolvedCount = 0;
+        IncludedCount = 0; UnresolvedCount = 0;
         foreach (var node in _nodes.AsEnumerable().Reverse())
         {
-            node.Difference = node.Left == null ? (node.Right == null ? "신규" : "버전2만") : node.Right == null ? "버전1만" :
-                node.Left.Signature != node.Right.Signature ? "타입 차이" :
-                node.Left.IsContainer && node.Left.Type.Kind != BinaryKind.Union ? "동일" :
-                BinaryValueCodec.Equal(Left.Data, node.Left, Right.Data, node.Right) ? "동일" : "값 차이";
-            node.HasDifference = node.Difference != "동일" || node.Children.Any(c => c.HasDifference);
-            var unresolved = node.IsResultLeaf && IsActive(node) && node.Resolution == ValueResolution.Unresolved;
-            if (unresolved) UnresolvedCount++;
-            node.HasUnresolved = unresolved || node.Children.Any(c => c.HasUnresolved);
+            var a = node.Left; var b = node.Right;
+            var reasons = new List<string>();
+            if (a == null || b == null) reasons.Add(a == null ? "버전2만" : "버전1만");
+            else
+            {
+                if (a.ByteLength != b.ByteLength) reasons.Add($"크기 차이 {a.ByteLength:N0} → {b.ByteLength:N0} B ({b.ByteLength - a.ByteLength:+#;-#;0})");
+                if (a.Type.Kind != b.Type.Kind || !a.IsContainer && a.Signature != b.Signature) reasons.Add("타입 차이");
+                else if (a.IsContainer)
+                {
+                    var ak = a.Children().Select(c => ChildKey(a, c)); var bk = b.Children().Select(c => ChildKey(b, c));
+                    if (!ak.SequenceEqual(bk)) reasons.Add("멤버 구성 차이");
+                    if (a.Type.Kind == BinaryKind.Union && a.Signature == b.Signature && !BinaryValueCodec.Equal(Left.Data, a, Right.Data, b))
+                        reasons.Add("원시 바이트 차이");
+                }
+                else if (a.Signature == b.Signature && !BinaryValueCodec.Equal(Left.Data, a, Right.Data, b))
+                    reasons.Add(a.Type.IsText && BinaryValueCodec.Format(Left.Data, a, "UTF-8") == BinaryValueCodec.Format(Right.Data, b, "UTF-8")
+                        ? "문자열 동일 · 원시 바이트 차이" : "값 차이");
+            }
+            var childCount = node.Children.Sum(c => c.DifferenceCount);
+            if (childCount > 0) reasons.Add($"하위 차이 {childCount:N0}개");
+            node.HasDifference = reasons.Count > 0;
+            node.DifferenceCount = childCount > 0 ? childCount : node.HasDifference ? 1 : 0;
+            node.Difference = reasons.Count == 0 ? "동일" : string.Join(" · ", reasons);
+            node.HasUnresolved = node.Target == null ||
+                !node.IsUnion && !IsArrayElement(node) && node.Children.Any(c => c.HasUnresolved);
         }
+        void Count(DatMergeNode node)
+        {
+            if (IsArrayElement(node) || node.IsUnion || node.Children.Count == 0)
+            {
+                if (node.Target == null) UnresolvedCount++; else IncludedCount++;
+            }
+            else foreach (var child in node.Children) Count(child);
+        }
+        Count(Root);
     }
 }

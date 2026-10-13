@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
+using ShmViewer.Core;
 using ShmViewer.Core.Dat;
 using System.Collections.ObjectModel;
 using System.IO;
@@ -17,7 +18,25 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     private bool _rebuildingRows;
     public DatInputViewModel Left { get; }
     public DatInputViewModel Right { get; }
-    public DatInputViewModel Target { get; }
+    private SctcDataKind _dataKind;
+    public SctcDataKind DataKind
+    {
+        get => _dataKind;
+        set
+        {
+            if (value == _dataKind) return;
+            if ((Left.UseSctcPath || Right.UseSctcPath) && !Invalidate())
+            {
+                OnPropertyChanged(nameof(IsRunData)); OnPropertyChanged(nameof(IsInitData)); return;
+            }
+            SetProperty(ref _dataKind, value);
+            if (Left.UseSctcPath) Left.ApplySctcPreset();
+            if (Right.UseSctcPath) Right.ApplySctcPreset();
+            OnPropertyChanged(nameof(IsRunData)); OnPropertyChanged(nameof(IsInitData));
+        }
+    }
+    public bool IsRunData { get => DataKind == SctcDataKind.Run; set { if (value) DataKind = SctcDataKind.Run; } }
+    public bool IsInitData { get => DataKind == SctcDataKind.Init; set { if (value) DataKind = SctcDataKind.Init; } }
     public DatMergeSession? Session { get; private set; }
     public List<DatMergeNode> SelectedNodes { get; } = new();
     public event Action<DatRowViewModel>? ScrollRequested;
@@ -26,7 +45,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _differencesOnly;
     [ObservableProperty] private string _encodingName = "ASCII";
     [ObservableProperty] private bool _showHex;
-    [ObservableProperty] private string _status = "버전1·2의 헤더, DAT, Struct를 지정하세요. 버전3은 별도의 헤더와 Struct를 사용합니다.";
+    [ObservableProperty] private string _status = "버전1·2의 헤더, DAT, Struct를 지정하세요. 버전3은 공통 항목으로 시작하며 선택한 항목만 저장합니다.";
     [ObservableProperty] private string _editorText = string.Empty;
     [ObservableProperty] private string _editorError = string.Empty;
     [ObservableProperty] private bool _hasPendingEdit;
@@ -37,8 +56,10 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     public string[] Encodings { get; } = { "ASCII", "CP949", "UTF-8" };
     public IEnumerable<string> LeftPaths => Session?.LeftFields.Keys ?? Enumerable.Empty<string>();
     public IEnumerable<string> RightPaths => Session?.RightFields.Keys ?? Enumerable.Empty<string>();
-    public IEnumerable<DatMergeNode> UnionBranches => SelectedRow?.Node.IsUnion == true ? SelectedRow.Node.Children.Where(c => c.Target != null) : Enumerable.Empty<DatMergeNode>();
-    public bool HasTargetSelection => !_disposed && !IsBusy && SelectedRow?.Node.Target != null;
+    public IEnumerable<DatMergeNode> UnionBranches => SelectedRow?.Node.IsUnion == true ? SelectedRow.Node.Children : Enumerable.Empty<DatMergeNode>();
+    public bool HasTargetSelection => !_disposed && !IsBusy && SelectedRow != null;
+    public string ResultSummary => Session == null ? "공통 항목을 자동 포함한 뒤 원하는 원본 항목을 추가하세요." :
+        $"{Session.Result.Length:N0} bytes · 포함 {Session.IncludedCount:N0}개 · 미포함 {Session.UnresolvedCount:N0}개";
     public bool CanSave => !_disposed && !IsBusy && !HasPendingEdit && string.IsNullOrEmpty(EditorError) && Session?.CanSave == true;
     public bool CanDiff => !_disposed && !IsBusy;
     public DatRowViewModel? SelectedRow
@@ -55,9 +76,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     {
         _confirm = confirm ?? (message => MessageBox.Show(message, "DAT Diff", MessageBoxButton.YesNo,
             MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes);
-        Left = new("버전1", false, Invalidate);
-        Right = new("버전2", false, Invalidate);
-        Target = new("버전3 결과", true, Invalidate);
+        Left = new("버전1", Invalidate, () => DataKind);
+        Right = new("버전2", Invalidate, () => DataKind);
     }
     public bool ConfirmDiscard() => !HasPendingEdit && Session?.IsDirty != true || _confirm("저장하지 않은 DAT 결과·매핑·입력 내용이 사라집니다. 계속하시겠습니까?");
     private bool Invalidate()
@@ -85,7 +105,6 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         try
         {
             var left = Left.Capture(); var right = Right.Capture();
-            var target = Target.Headers.Count > 0 || !string.IsNullOrWhiteSpace(Target.StructName) ? Target.Capture() : null;
             var session = await Task.Run(() =>
             {
                 DatDocument Load(DatInputSnapshot input)
@@ -95,13 +114,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
                     catch (Exception ex) { throw new InvalidDataException(input.Label + ": " + ex.Message, ex); }
                 }
                 var a = Load(left); var b = Load(right); token.ThrowIfCancellationRequested();
-                BinarySchema? schema = null;
-                if (target != null)
-                {
-                    try { schema = target.Parse(); }
-                    catch (Exception ex) { throw new InvalidDataException(target.Label + ": " + ex.Message, ex); }
-                }
-                return new DatMergeSession(a, b, schema, token);
+                return new DatMergeSession(a, b, token);
             }, token);
             if (_disposed || token.IsCancellationRequested) return;
             Session = session; HasPendingEdit = false; EditorError = string.Empty; _selectedRow = null;
@@ -118,7 +131,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     private void NavigateDifference(int direction)
     {
         if (Session == null) return;
-        var candidates = Session.Nodes.Where(n => n.Parent != null && (n.Children.Count == 0 || n.IsUnion) && (n.HasDifference || n.HasUnresolved)).ToList();
+        var candidates = Session.Nodes.Where(n => (n.HasDifference || n.HasUnresolved) &&
+            (n.Children.Count == 0 || n.IsUnion || n.Children.All(c => !c.HasDifference && !c.HasUnresolved))).ToList();
         if (candidates.Count == 0) return;
         var current = SelectedRow == null ? -1 : candidates.IndexOf(SelectedRow.Node);
         var index = current < 0 ? (direction > 0 ? 0 : candidates.Count - 1) : (current + direction + candidates.Count) % candidates.Count;
@@ -130,6 +144,9 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     private IEnumerable<DatMergeNode> Selection() => SelectedNodes.Count > 0 ? SelectedNodes : SelectedRow == null ? Array.Empty<DatMergeNode>() : new[] { SelectedRow.Node };
     [RelayCommand] private void UseLeft() => Edit(() => Session?.ApplySource(Selection(), true));
     [RelayCommand] private void UseRight() => Edit(() => Session?.ApplySource(Selection(), false));
+    [RelayCommand] private void UseLeftRow(DatRowViewModel row) => Edit(() => Session?.ApplySource(new[] { row.Node }, true));
+    [RelayCommand] private void UseRightRow(DatRowViewModel row) => Edit(() => Session?.ApplySource(new[] { row.Node }, false));
+    [RelayCommand] private void Remove() => Edit(() => Session?.Remove(Selection()));
     [RelayCommand] private void SetZero() => Edit(() => Session?.SetZero(Selection()));
     [RelayCommand] private void MapLeft() => Edit(() => { if (SelectedRow != null) Session?.Map(SelectedRow.Node, true, LeftMapping); });
     [RelayCommand] private void MapRight() => Edit(() => { if (SelectedRow != null) Session?.Map(SelectedRow.Node, false, RightMapping); });
@@ -210,13 +227,14 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     }
     private void UpdateSummary()
     {
-        if (Session != null) Status = $"버전1 {Session.Left.Schema.Root.Size:N0} bytes | 버전2 {Session.Right.Schema.Root.Size:N0} bytes | " +
-            (Session.TargetSchema == null ? "버전3 헤더·Struct를 지정하면 결과를 생성합니다." : $"버전3 {Session.Result.Length:N0} bytes | 미선택 {Session.UnresolvedCount:N0}개");
+        if (Session != null) Status = $"버전1 {Session.Left.Schema.Root.Size:N0} bytes | 버전2 {Session.Right.Schema.Root.Size:N0} bytes | 버전3 {ResultSummary}";
+        OnPropertyChanged(nameof(ResultSummary));
     }
     private void NotifyState()
     {
         OnPropertyChanged(nameof(CanSave)); OnPropertyChanged(nameof(HasTargetSelection)); OnPropertyChanged(nameof(LeftPaths)); OnPropertyChanged(nameof(RightPaths));
         OnPropertyChanged(nameof(CanDiff));
+        OnPropertyChanged(nameof(ResultSummary));
         DiffCommand.NotifyCanExecuteChanged(); SaveCommand.NotifyCanExecuteChanged();
     }
     public void Dispose()
@@ -244,12 +262,23 @@ public sealed class DatRowViewModel
     public string LeftDetail => Detail(Node.Left);
     public string RightDetail => Detail(Node.Right);
     public string TargetDetail => Detail(Node.Target);
-    public string LeftValue => Node.Left == null ? string.Empty : BinaryValueCodec.Format(Owner.Session!.Left.Data, Node.Left, Owner.EncodingName, Owner.ShowHex && !Node.Left.IsContainer);
-    public string RightValue => Node.Right == null ? string.Empty : BinaryValueCodec.Format(Owner.Session!.Right.Data, Node.Right, Owner.EncodingName, Owner.ShowHex && !Node.Right.IsContainer);
-    public string TargetValue => Node.Target == null ? string.Empty : !Owner.Session!.IsActive(Node) ? "(비활성 union 보기) " + BinaryValueCodec.Format(Owner.Session.Result, Node.Target, Owner.EncodingName, false) :
-        Node.IsResultLeaf && Node.Resolution == ValueResolution.Unresolved ? "미선택" : BinaryValueCodec.Format(Owner.Session.Result, Node.Target, Owner.EncodingName, Owner.ShowHex && !Node.Target.IsContainer);
-    public string State => Node.Difference + (Node.Target == null ? " · 대상 없음" : !Owner.Session!.IsActive(Node) ? " · 비활성" : Node.IsResultLeaf ? " · " + (Node.Resolution switch
-    { ValueResolution.Automatic => "자동", ValueResolution.Version1 => "버전1 선택", ValueResolution.Version2 => "버전2 선택", ValueResolution.Manual => "직접 입력", ValueResolution.Zero => "0 적용", _ => "미선택" }) : Node.HasUnresolved ? " · 하위 미선택" : " · 완료");
-    public string StateColor => Node.HasUnresolved ? "#F2A65A" : Node.HasDifference ? "#E5C07B" : "#83C990";
-    public string RowColor => Node.HasUnresolved ? "#352C22" : Node.HasDifference ? "#292E3D" : "#202326";
+    public bool HasLeft => Node.Left != null;
+    public bool HasRight => Node.Right != null;
+    private string Display(byte[] data, BinaryField? field) => field == null ? "—" : field.IsContainer
+        ? $"{field.ByteLength:N0} B · 하위 {field.Children().Count():N0}개"
+        : BinaryValueCodec.Format(data, field, Owner.EncodingName, Owner.ShowHex);
+    public string LeftValue => Display(Owner.Session!.Left.Data, Node.Left);
+    public string RightValue => Display(Owner.Session!.Right.Data, Node.Right);
+    public string TargetValue => Node.Target == null ? "미포함" :
+        (!Owner.Session!.IsActive(Node) ? "(비활성 union 보기) " : "") + Display(Owner.Session!.Result, Node.Target);
+    public string ResultState => Node.Target == null ? "○ 미포함" : !Owner.Session!.IsActive(Node) ? "공유 바이트 · 비활성 보기" :
+        Node.Resolution switch
+        {
+            ValueResolution.Automatic => "✓ 공통 자동 포함", ValueResolution.Version1 => "버전1 적용",
+            ValueResolution.Version2 => "버전2 적용", ValueResolution.Manual => "직접 입력", ValueResolution.Zero => "0 적용",
+            _ => Node.HasUnresolved ? "일부 포함" : "✓ 포함"
+        };
+    public string State => Node.Difference + " · " + ResultState;
+    public string StateColor => Node.Target == null ? "#FFB56B" : Node.HasDifference ? "#FFE082" : "#91F0AD";
+    public string RowColor => Node.Target == null ? "#492D18" : Node.HasDifference ? "#3D371C" : "#193B2A";
 }

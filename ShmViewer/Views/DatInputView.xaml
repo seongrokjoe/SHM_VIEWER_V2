@@ -6,6 +6,7 @@
  <Border Background="#25282D" BorderBrush="#484B51" BorderThickness="1" Padding="8" Margin="2">
   <StackPanel>
    <TextBlock Text="{Binding Label}" Foreground="#9CDCFE" FontSize="14" FontWeight="Bold" Margin="0,0,0,5"/>
+   <CheckBox Content="Use SCTC Path" IsChecked="{Binding UseSctcPath}" Foreground="#E0E0E0" Margin="0,0,0,6"/>
    <DockPanel Margin="0,0,0,3">
     <Button Content="+ 헤더" Command="{Binding AddHeadersCommand}" Style="{DynamicResource DarkBtn}"/>
     <Button Content="삭제" Command="{Binding RemoveHeaderCommand}" Margin="4,0"/>
@@ -23,7 +24,7 @@
      </TextBlock>
     </DataTemplate></ListBox.ItemTemplate>
    </ListBox>
-   <DockPanel Margin="0,5,0,0" Visibility="{Binding IsTarget, Converter={x:Static local:InverseBoolToVisConverter.Instance}}">
+   <DockPanel Margin="0,5,0,0">
     <Button DockPanel.Dock="Right" Content="DAT…" Command="{Binding ChooseDatCommand}" Margin="4,0,0,0"/>
     <TextBox Text="{Binding DatPath, UpdateSourceTrigger=LostFocus}" ToolTip="DAT 파일 경로"/>
    </DockPanel>

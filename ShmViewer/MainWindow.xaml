@@ -80,13 +80,14 @@
     </Window.Resources>
 
     <DockPanel>
-        <Border DockPanel.Dock="Top" Background="#252526" Padding="12,9" BorderBrush="#444" BorderThickness="0,0,0,1">
-            <CheckBox Content="Use Default SCTC Clean" Foreground="#E0E0E0" FontWeight="Bold"
-                      IsChecked="{Binding UseDefaultSctcClean, Mode=OneWay}" Click="DefaultPreset_Click"
-                      ToolTip="RealTime Viewer의 기본 헤더와 SHM 탭 설정"/>
-        </Border>
         <TabControl x:Name="WorkspaceTabs" Background="#1E1E1E" BorderBrush="#444">
             <TabItem Header="RealTime Viewer">
+                <DockPanel>
+                    <Border DockPanel.Dock="Top" Background="#252526" Padding="12,9" BorderBrush="#444" BorderThickness="0,0,0,1">
+                        <CheckBox x:Name="UseSctcCheckBox" Content="Use SCTC" Foreground="#E0E0E0" FontWeight="Bold"
+                                  IsChecked="{Binding UseDefaultSctcClean, Mode=OneWay}" Click="DefaultPreset_Click"
+                                  ToolTip="RealTime Viewer의 기본 헤더와 SHM 탭 설정"/>
+                    </Border>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -519,6 +520,7 @@
             </Grid>
         </Border>
     </Grid>
+                </DockPanel>
             </TabItem>
             <TabItem Header="DAT Diff">
                 <views:DatDiffView DataContext="{Binding DatDiff}"/>

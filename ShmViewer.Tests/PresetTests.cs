@@ -19,15 +19,15 @@ public sealed class PresetTests
         var store = new MemoryStore();
         using var vm = new MainViewModel(store, _ => true);
         Assert.True(vm.SetDefaultPreset(true)); await vm.Initialization;
-        Assert.Equal(8, vm.HeaderFiles.Count); Assert.Equal(2, vm.HeaderGroups.Count());
-        Assert.Equal(6, vm.Tabs.Count);
+        Assert.Equal(7, vm.HeaderFiles.Count); Assert.Equal(2, vm.HeaderGroups.Count());
+        Assert.Equal(5, vm.Tabs.Count);
         Assert.All(vm.Tabs, t => { Assert.Equal(RefreshMode.Ms1000, t.RefreshMode); Assert.False(t.IsRunning); });
         Assert.All(vm.HeaderFiles, f => Assert.Contains("SCTCApplication", f.Path));
         var recipe = Assert.Single(vm.HeaderFiles, f => f.Name == "_Recipe.h");
         Assert.Equal(Path.Combine(SctcPreset.Load().HeaderGroups[0].Directory, "_Recipe.h"), recipe.Path);
         Assert.Contains(recipe.Path, store.State.Headers);
         Assert.Equal("tagRun", vm.Tabs[0].StructName);
-        Assert.Equal("OBJECT_INFO_MEMORY", vm.Tabs[5].ShmName);
+        Assert.DoesNotContain(vm.Tabs, t => t.ShmName == "OBJECT_INFO_MEMORY");
         Assert.True(store.State.UseDefaultSctcClean);
     }
     [Fact]
@@ -55,6 +55,52 @@ public sealed class PresetTests
         tab.RefreshMode = RefreshMode.Ms5000;
         Assert.Equal("Ms5000", store.State.Tabs.Single().RefreshMode);
         Assert.Equal(missing, store.State.Headers.Single());
+    }
+    [Fact]
+    public async Task RestorationRemovesOnlyObsoleteSctcDefaults()
+    {
+        var obsolete = Path.Combine(SctcPreset.Load().HeaderGroups[0].Directory, "jobinfo.h");
+        var custom = Path.Combine(Path.GetTempPath(), "custom", "jobinfo.h");
+        var store = new MemoryStore { State = new(true, new() { obsolete, custom }, new()
+        {
+            new("OBJECT_INFO_MEMORY", "STJOBINFO", "Ms1000"), new("CUSTOM", "STJOBINFO", "Ms1000")
+        }) };
+        using var vm = new MainViewModel(store, _ => true); await vm.Initialization;
+        Assert.Equal(custom, Assert.Single(vm.HeaderFiles).Path);
+        Assert.Equal("CUSTOM", Assert.Single(vm.Tabs).ShmName);
+        Assert.Equal(custom, Assert.Single(store.State.Headers));
+    }
+    [Fact]
+    public void DatPresetsAreIndependentAndManualChangesClearOnlyThatSide()
+    {
+        using var vm = new DatDiffViewModel(_ => true);
+        Assert.True(vm.IsRunData); Assert.False(vm.Left.UseSctcPath); Assert.False(vm.Right.UseSctcPath);
+        vm.Left.Pack = "2"; vm.Right.StructName = "Custom";
+        vm.Left.UseSctcPath = true;
+        Assert.Equal("tagRun", vm.Left.StructName); Assert.Equal("2", vm.Left.Pack);
+        Assert.Equal(new[] { "_enumdef.h", "_Run.h" }, vm.Left.Headers.Select(h => h.Name));
+        Assert.EndsWith("MEM_RUNDATA.DAT", vm.Left.DatPath);
+        vm.IsInitData = true;
+        Assert.Equal("tagUnitInitial", vm.Left.StructName); Assert.Equal("Custom", vm.Right.StructName);
+        Assert.Equal(new[] { "_enumdef.h", "K12Initial.h" }, vm.Left.Headers.Select(h => h.Name));
+        Assert.EndsWith("INIT_UNIT.DAT", vm.Left.DatPath);
+        vm.Right.UseSctcPath = true; vm.Left.DatPath = "custom.dat";
+        Assert.False(vm.Left.UseSctcPath); Assert.True(vm.Right.UseSctcPath);
+        vm.IsRunData = true;
+        Assert.Equal("custom.dat", vm.Left.DatPath); Assert.Equal("tagRun", vm.Right.StructName);
+        vm.Right.UseSctcPath = false; Assert.Equal("tagRun", vm.Right.StructName);
+    }
+    [Fact]
+    public void PresetConfirmationCanCancelWithoutChangingInputsAndMissingPathIsReported()
+    {
+        var calls = 0;
+        var input = new DatInputViewModel("버전1", () => { calls++; return false; }, () => SctcDataKind.Run);
+        input.UseSctcPath = true;
+        Assert.False(input.UseSctcPath); Assert.Empty(input.Headers); Assert.Equal(1, calls);
+        var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "missing.h");
+        var custom = new DatInputViewModel("버전1", () => true, () => SctcDataKind.Run);
+        custom.AddFiles(new[] { missing }); custom.StructName = "Root";
+        Assert.Contains(missing, Assert.Throws<InvalidDataException>(() => custom.Capture()).Message);
     }
     [Fact]
     public void LegacySettingsMigrateWithoutDroppingMissingEntries()

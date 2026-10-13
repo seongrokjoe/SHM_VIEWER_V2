@@ -64,6 +64,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
         try
         {
             var saved = _settings.Load();
+            if (saved.UseDefaultSctcClean)
+            {
+                var obsoleteHeader = Path.Combine(SctcPreset.Load().HeaderGroups[0].Directory, "jobinfo.h");
+                var changed = saved.Headers.RemoveAll(p => string.Equals(p, obsoleteHeader, StringComparison.OrdinalIgnoreCase));
+                changed += saved.Tabs.RemoveAll(t => t.ShmName == "OBJECT_INFO_MEMORY" && t.StructName == "STJOBINFO");
+                if (changed > 0) _settings.Save(saved);
+            }
             UseDefaultSctcClean = saved.UseDefaultSctcClean;
             foreach (var path in saved.Headers.Distinct(StringComparer.OrdinalIgnoreCase)) HeaderFiles.Add(new(path));
             foreach (var entry in saved.Tabs) AddPendingTab(entry);

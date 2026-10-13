@@ -7,8 +7,7 @@
         "_enumdef.h",
         "_Recipe.h",
         "_Run.h",
-        "_StcCfg.h",
-        "jobinfo.h"
+        "_StcCfg.h"
       ]
     },
     {
@@ -44,11 +43,26 @@
       "ShmName": "MAINTITEM_SHARED_MEMORY",
       "StructName": "stMaintItem",
       "RefreshMode": "Ms1000"
+    }
+  ],
+  "DatPresets": [
+    {
+      "Kind": "Run",
+      "Headers": [
+        "D:\\K12_SCTC\\SCTCApplication\\lib\\Internal\\common\\h\\_enumdef.h",
+        "D:\\K12_SCTC\\SCTCApplication\\lib\\Internal\\common\\h\\_Run.h"
+      ],
+      "DatPath": "D:\\K12_SCTC\\Resource\\CTC\\MEM_RUNDATA.DAT",
+      "StructName": "tagRun"
     },
     {
-      "ShmName": "OBJECT_INFO_MEMORY",
-      "StructName": "STJOBINFO",
-      "RefreshMode": "Ms1000"
+      "Kind": "Init",
+      "Headers": [
+        "D:\\K12_SCTC\\SCTCApplication\\lib\\Internal\\common\\h\\_enumdef.h",
+        "D:\\K12_SCTC\\SCTCApplication\\src\\SMA\\SharedMemory_App\\K12Initial.h"
+      ],
+      "DatPath": "D:\\K12_SCTC\\Resource\\CTC\\INIT_UNIT.DAT",
+      "StructName": "tagUnitInitial"
     }
   ]
 }

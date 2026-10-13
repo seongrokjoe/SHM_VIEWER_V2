@@ -10,6 +10,8 @@ public sealed class BinaryType
     public BinaryKind Kind { get; init; }
     public int Size { get; init; }
     public int Alignment { get; init; } = 1;
+    public int Pack { get; internal set; } = 8;
+    public int ExplicitAlignment { get; init; }
     public bool IsUnsigned { get; init; }
     public List<BinaryMember> Members { get; } = new();
     public Dictionary<string, BigInteger> EnumValues { get; } = new(StringComparer.Ordinal);
@@ -17,6 +19,13 @@ public sealed class BinaryType
     public int Count { get; init; }
     public bool IsText => Kind == BinaryKind.Array && Element?.Kind is BinaryKind.Char or BinaryKind.WChar;
     public bool IsContainer => Kind is BinaryKind.Record or BinaryKind.Union || Kind == BinaryKind.Array && !IsText;
+    // MSVC propagates explicit alignment through records and arrays, even under pack(1).
+    public int RequiredAlignment => Math.Max(ExplicitAlignment, Kind switch
+    {
+        BinaryKind.Array => Element!.RequiredAlignment,
+        BinaryKind.Record or BinaryKind.Union => Members.Select(m => Math.Max(m.ExplicitAlignment, m.Type.RequiredAlignment)).DefaultIfEmpty(0).Max(),
+        _ => 0
+    });
     public string Signature => Kind switch
     {
         BinaryKind.Record or BinaryKind.Union => $"{Kind}:{Size}:" + string.Join(";", Members.Select(m => $"{m.Name}@{m.Offset}/{m.BitOffset}/{m.BitWidth}:{m.Type.Signature}")),
@@ -26,7 +35,8 @@ public sealed class BinaryType
     };
 }
 
-public sealed record BinaryMember(string Name, BinaryType Type, int Offset, int BitOffset = 0, int BitWidth = 0, bool IsAnonymous = false);
+public sealed record BinaryMember(string Name, BinaryType Type, int Offset, int BitOffset = 0, int BitWidth = 0,
+    bool IsAnonymous = false, bool IsPadding = false, int ExplicitAlignment = 0);
 public sealed record BinarySchema(string StructName, BinaryType Root);
 
 public sealed record BinaryField(string Path, BinaryType Type, int Offset, int BitOffset = 0, int BitWidth = 0)
@@ -45,6 +55,7 @@ public sealed record BinaryField(string Path, BinaryType Type, int Offset, int B
         {
             foreach (var member in Type.Members)
             {
+                if (member.IsPadding) continue;
                 var prefix = string.IsNullOrEmpty(Path) ? string.Empty : Path + ".";
                 yield return new(prefix + member.Name, member.Type, checked(Offset + member.Offset), member.BitOffset, member.BitWidth);
             }

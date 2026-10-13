@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
+using ShmViewer.Core;
 using ShmViewer.Core.Dat;
 using ShmViewer.Core.Parser;
 using System.Collections.ObjectModel;
@@ -17,7 +18,19 @@ public partial class DatInputViewModel : ObservableObject
 {
     private readonly Func<bool> _beforeChange;
     public string Label { get; }
-    public bool IsTarget { get; }
+    private readonly Func<SctcDataKind> _dataKind;
+    private bool _useSctcPath;
+    public bool UseSctcPath
+    {
+        get => _useSctcPath;
+        set
+        {
+            if (value == _useSctcPath) return;
+            if (value && !_beforeChange()) { OnPropertyChanged(); return; }
+            SetProperty(ref _useSctcPath, value);
+            if (value) ApplySctcPreset();
+        }
+    }
     public ObservableCollection<HeaderFileEntry> Headers { get; } = new();
     [ObservableProperty] private HeaderFileEntry? _selectedHeader;
     private string _datPath = string.Empty;
@@ -30,12 +43,29 @@ public partial class DatInputViewModel : ObservableObject
     public string IncludeDirectories { get => _includeDirectories; set => Change(ref _includeDirectories, value); }
     public string Defines { get => _defines; set => Change(ref _defines, value); }
     public string Pack { get => _pack; set => Change(ref _pack, value); }
-    public DatInputViewModel(string label, bool isTarget, Func<bool> beforeChange)
-    { Label = label; IsTarget = isTarget; _beforeChange = beforeChange; }
+    public DatInputViewModel(string label, Func<bool> beforeChange, Func<SctcDataKind> dataKind)
+    { Label = label; _beforeChange = beforeChange; _dataKind = dataKind; }
+    internal void ApplySctcPreset()
+    {
+        var preset = SctcPreset.Load().ForData(_dataKind());
+        Headers.Clear();
+        foreach (var path in preset.Headers) Headers.Add(new(path));
+        _datPath = preset.DatPath; _structName = preset.StructName;
+        OnPropertyChanged(nameof(DatPath)); OnPropertyChanged(nameof(StructName));
+    }
+    private void MarkCustom()
+    {
+        if (!_useSctcPath) return;
+        _useSctcPath = false; OnPropertyChanged(nameof(UseSctcPath));
+    }
     private void Change(ref string field, string value, [System.Runtime.CompilerServices.CallerMemberName] string? name = null)
     {
         if (field == value) return;
-        if (_beforeChange()) SetProperty(ref field, value, name);
+        if (_beforeChange())
+        {
+            SetProperty(ref field, value, name);
+            if (name is nameof(DatPath) or nameof(StructName)) MarkCustom();
+        }
         else OnPropertyChanged(name);
     }
     [RelayCommand]
@@ -47,9 +77,10 @@ public partial class DatInputViewModel : ObservableObject
     public void AddFiles(IEnumerable<string> files)
     {
         if (!_beforeChange()) return;
+        MarkCustom();
         foreach (var file in files)
         {
-            if (file.EndsWith(".dat", StringComparison.OrdinalIgnoreCase) && !IsTarget)
+            if (file.EndsWith(".dat", StringComparison.OrdinalIgnoreCase))
             { _datPath = file; OnPropertyChanged(nameof(DatPath)); }
             else if (file.EndsWith(".h", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".hpp", StringComparison.OrdinalIgnoreCase))
                 if (!Headers.Any(h => string.Equals(h.Path, file, StringComparison.OrdinalIgnoreCase))) Headers.Add(new(file));
@@ -64,7 +95,7 @@ public partial class DatInputViewModel : ObservableObject
     [RelayCommand]
     private void RemoveHeader()
     {
-        if (SelectedHeader != null && _beforeChange()) Headers.Remove(SelectedHeader);
+        if (SelectedHeader != null && _beforeChange()) { MarkCustom(); Headers.Remove(SelectedHeader); }
     }
     [RelayCommand]
     private void MoveHeader(string direction)
@@ -72,13 +103,14 @@ public partial class DatInputViewModel : ObservableObject
         if (SelectedHeader == null) return;
         var index = Headers.IndexOf(SelectedHeader);
         var next = index + (direction == "up" ? -1 : 1);
-        if (next >= 0 && next < Headers.Count && _beforeChange()) Headers.Move(index, next);
+        if (next >= 0 && next < Headers.Count && _beforeChange()) { MarkCustom(); Headers.Move(index, next); }
     }
     public DatInputSnapshot Capture()
     {
         foreach (var header in Headers) header.Check();
         if (Headers.Count == 0 || string.IsNullOrWhiteSpace(StructName)) throw new InvalidDataException(Label + ": 헤더와 Struct를 지정하세요.");
-        if (Headers.Any(h => !h.IsAvailable)) throw new InvalidDataException(Label + ": 누락되거나 읽을 수 없는 헤더가 있습니다.");
+        var missing = Headers.Where(h => !h.IsAvailable).Select(h => h.Path).ToArray();
+        if (missing.Length > 0) throw new InvalidDataException(Label + ": 누락되거나 읽을 수 없는 헤더:\n" + string.Join("\n", missing));
         if (!int.TryParse(Pack, out var pack)) throw new InvalidDataException(Label + ": Pack은 정수로 입력하세요.");
         string[] Lines(string text) => text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return new(Label, Headers.Select(h => h.Path).ToArray(), DatPath.Trim(), StructName.Trim(),

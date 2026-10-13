@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -32,23 +33,49 @@ public sealed class ViewerUiTests
         {
             window.Show(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             vm.SetDefaultPreset(true); await vm.Initialization;
-            Assert.Equal(6, vm.Tabs.Count); Assert.All(vm.Tabs, t => Assert.False(t.IsRunning));
+            Assert.Equal(5, vm.Tabs.Count); Assert.All(vm.Tabs, t => Assert.False(t.IsRunning));
+            var sctcOption = Assert.IsType<CheckBox>(window.FindName("UseSctcCheckBox"));
+            Assert.Equal("Use SCTC", sctcOption.Content);
             Render(window, "realtime-preset.png");
             vm.SetDefaultPreset(false);
             var header = Path.Combine(directory, "version.h"); File.WriteAllText(header, "struct Root { int common; int conflict; int items[2]; };");
             var left = Path.Combine(directory, "left.dat"); File.WriteAllBytes(left, new byte[] { 7,0,0,0, 10,0,0,0, 1,0,0,0, 2,0,0,0 });
             var right = Path.Combine(directory, "right.dat"); File.WriteAllBytes(right, new byte[] { 7,0,0,0, 20,0,0,0, 1,0,0,0, 3,0,0,0 });
-            foreach (var input in new[] { diff.Left, diff.Right, diff.Target }) { input.AddFiles(new[] { header }); input.StructName = "Root"; }
+            foreach (var input in new[] { diff.Left, diff.Right }) { input.AddFiles(new[] { header }); input.StructName = "Root"; }
             diff.Left.DatPath = left; diff.Right.DatPath = right;
             var workspace = Assert.IsType<TabControl>(window.FindName("WorkspaceTabs")); workspace.SelectedIndex = 1;
             await diff.DiffCommand.ExecuteAsync(null); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             Assert.NotNull(diff.Session); Assert.Equal(2, diff.Session!.UnresolvedCount);
-            Assert.False(diff.CanSave);
+            Assert.True(diff.CanSave);
             var datView = Find<DatDiffView>(window)!;
             Assert.NotNull(datView);
+            Assert.False(sctcOption.IsVisible);
             var grid = Assert.IsType<DataGrid>(datView.FindName("ComparisonGrid"));
             Assert.Equal(3, grid.Columns.Count); Assert.True(grid.ActualHeight > 150);
             Assert.All(grid.Columns, column => Assert.True(column.ActualWidth > 250));
+            Assert.True(datView.HandleShortcut(Key.Down, ModifierKeys.Control, grid));
+            Assert.Equal("conflict", diff.SelectedRow?.Node.Path);
+            Assert.True(datView.HandleShortcut(Key.Down, ModifierKeys.Control, grid));
+            Assert.Equal("items[1]", diff.SelectedRow?.Node.Path);
+            Assert.True(diff.Session.Nodes.Single(n => n.Path == "items").IsExpanded);
+            Assert.True(datView.HandleShortcut(Key.Up, ModifierKeys.Control, grid));
+            Assert.Equal("conflict", diff.SelectedRow?.Node.Path);
+            Assert.False(datView.HandleShortcut(Key.Right, ModifierKeys.Control, new TextBox()));
+            Assert.Null(diff.SelectedRow!.Node.Target);
+            Assert.True(datView.HandleShortcut(Key.Right, ModifierKeys.Control, grid));
+            Assert.Equal("10", diff.SelectedRow!.TargetValue);
+            Assert.True(datView.HandleShortcut(Key.Left, ModifierKeys.Control, grid));
+            Assert.Equal("20", diff.SelectedRow!.TargetValue);
+            Assert.True(datView.HandleShortcut(Key.Z, ModifierKeys.Control, grid));
+            Assert.Equal("10", diff.SelectedRow!.TargetValue);
+            Assert.True(datView.HandleShortcut(Key.Y, ModifierKeys.Control, grid));
+            Assert.Equal("20", diff.SelectedRow!.TargetValue);
+            diff.UndoCommand.Execute(null); diff.UndoCommand.Execute(null);
+            diff.DifferencesOnly = true;
+            Assert.DoesNotContain(diff.Rows, r => r.Node.Path == "common");
+            diff.DifferencesOnly = false;
+            Assert.Equal("7", diff.Rows.Single(r => r.Node.Path == "common").TargetValue);
+            Assert.DoesNotContain(diff.Rows, r => r.State.Contains("대상 없음"));
             Render(window, "dat-diff.png");
             window.Width = window.MinWidth; window.Height = window.MinHeight;
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
@@ -72,6 +99,10 @@ public sealed class ViewerUiTests
             Assert.Equal("conflict", diff.SelectedRow?.Node.Path);
             Assert.Same(diff.SelectedRow, grid.SelectedItem);
             Assert.Equal("conflict", Assert.Single(diff.SelectedNodes).Path);
+            var beforePreset = diff.Left.Headers.Select(h => h.Path).ToArray();
+            diff.Left.UseSctcPath = true;
+            Assert.False(diff.Left.UseSctcPath); Assert.Equal(beforePreset, diff.Left.Headers.Select(h => h.Path));
+            Assert.Equal("123", diff.EditorText);
             discard = true;
             diff.ShowHex = true; Assert.True(diff.HasPendingEdit); Assert.Equal("123", diff.EditorText);
             diff.ShowHex = false;
@@ -94,6 +125,36 @@ public sealed class ViewerUiTests
     });
 
     [Fact]
+    public Task RunInitSwitchCancelsOnceAndPreservesBothPresetSelections() => RunSta(async () =>
+    {
+        var calls = 0;
+        var approve = false;
+        using var diff = new DatDiffViewModel(_ => { calls++; return approve; });
+        diff.Left.UseSctcPath = true; diff.Right.UseSctcPath = true;
+        var session = new DatMergeSession(DatMergeTests.Document("struct Root { int x; };"), DatMergeTests.Document("struct Root { int x; };"));
+        typeof(DatDiffViewModel).GetProperty(nameof(DatDiffViewModel.Session))!.SetValue(diff, session);
+        var view = new DatDiffView { DataContext = diff };
+        var window = new Window { Content = view, Width = 1000, Height = 700, Left = -12000, Top = -12000, ShowActivated = false };
+        try
+        {
+            window.Show(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            var run = Assert.IsType<RadioButton>(view.FindName("RunDataOption"));
+            var init = Assert.IsType<RadioButton>(view.FindName("InitDataOption"));
+            init.SetCurrentValue(RadioButton.IsCheckedProperty, true);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal(1, calls); Assert.True(diff.IsRunData); Assert.True(run.IsChecked); Assert.False(init.IsChecked);
+            Assert.Same(session, diff.Session); Assert.Equal("tagRun", diff.Left.StructName); Assert.Equal("tagRun", diff.Right.StructName);
+            approve = true;
+            init.SetCurrentValue(RadioButton.IsCheckedProperty, true);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal(2, calls); Assert.Null(diff.Session); Assert.True(diff.IsInitData);
+            Assert.True(diff.Left.UseSctcPath); Assert.True(diff.Right.UseSctcPath);
+            Assert.Equal("tagUnitInitial", diff.Left.StructName); Assert.Equal("tagUnitInitial", diff.Right.StructName);
+        }
+        finally { window.Close(); }
+    });
+
+    [Fact]
     public Task DocumentedSamples_MapEditUndoAndSaveExpectedTargetBytes() => RunSta(async () =>
     {
         var samples = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../TestHeaders/DatDiff"));
@@ -102,7 +163,7 @@ public sealed class ViewerUiTests
         using var diff = new DatDiffViewModel(_ => true);
         try
         {
-            var inputs = new[] { diff.Left, diff.Right, diff.Target };
+            var inputs = new[] { diff.Left, diff.Right };
             for (var i = 0; i < inputs.Length; i++)
             {
                 inputs[i].AddFiles(new[] { Path.Combine(samples, $"version{i + 1}.h") });
@@ -113,7 +174,7 @@ public sealed class ViewerUiTests
             var right = File.ReadAllBytes(diff.Right.DatPath);
             await diff.DiffCommand.ExecuteAsync(null);
             Assert.NotNull(diff.Session);
-            Assert.Equal(7, diff.Session.UnresolvedCount);
+            Assert.Equal(5, diff.Session.UnresolvedCount);
 
             void Select(string path)
             {
@@ -123,21 +184,21 @@ public sealed class ViewerUiTests
                 diff.SelectedRow = diff.Rows.Single(r => r.Node == node);
             }
             Select("conflict"); diff.UseLeftCommand.Execute(null);
-            Select("renamed"); diff.LeftMapping = "legacy"; diff.MapLeftCommand.Execute(null); diff.UseLeftCommand.Execute(null);
+            Select("legacy"); diff.UseLeftCommand.Execute(null);
             Select("added"); diff.UseRightCommand.Execute(null);
             Select("samples"); diff.UseRightCommand.Execute(null);
-            Select("samples[3]"); diff.SetZeroCommand.Execute(null);
-            Select("fresh"); diff.EditorText = "123"; diff.ApplyValueCommand.Execute(null);
+            Select("samples[1]"); diff.SetZeroCommand.Execute(null);
+            Select("legacy"); diff.EditorText = "123"; diff.ApplyValueCommand.Execute(null);
             Assert.Empty(diff.EditorError);
             Assert.True(diff.CanSave);
 
-            diff.UndoCommand.Execute(null); Assert.False(diff.CanSave);
+            diff.UndoCommand.Execute(null); Assert.True(diff.CanSave);
             diff.RedoCommand.Execute(null); Assert.True(diff.CanSave);
             var output = Path.Combine(directory, "version3.dat"); diff.Session.Save(output);
-            var expected = Convert.FromHexString("070000000A00630000002A00000001000900030000007B000000");
-            Assert.Equal(26, expected.Length);
+            var expected = Convert.FromHexString("070000000A0000007B0000000100000003002A000000");
+            Assert.Equal(22, expected.Length);
             Assert.Equal(expected, File.ReadAllBytes(output));
-            Assert.Equal(expected, DatDocument.Load(output, diff.Target.Capture().Parse()).Bytes.ToArray());
+            Assert.Equal(expected, DatDocument.Load(output, diff.Session.TargetSchema).Bytes.ToArray());
             Assert.Equal(left, File.ReadAllBytes(diff.Left.DatPath));
             Assert.Equal(right, File.ReadAllBytes(diff.Right.DatPath));
             Assert.False(diff.Session.IsDirty);
