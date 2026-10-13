@@ -92,14 +92,17 @@ public sealed class DatCompositionTests
     }
 
     [Fact]
-    public void SelectingChildOfOmittedStructArrayElementIncludesWholeElement()
+    public void CompatibleStructArrayKeepsLayoutBeforeSelectingAChangedMember()
     {
         const string header = "struct Item { int a; int b; }; struct Root { Item items[2]; };";
         var session = new DatMergeSession(Document(header, ("items[1].b", "1")), Document(header, ("items[1].b", "2")));
-        Assert.Null(Node(session, "items[1].a").Target); Assert.Equal(8, session.Result.Length);
+        Assert.NotNull(Node(session, "items[1].a").Target); Assert.Equal(16, session.Result.Length);
+        Assert.Equal(ValueResolution.Automatic, Node(session, "items[1].a").AppliedResolution);
+        Assert.Equal(1, session.UnassignedValueCount); Assert.False(session.CanSave);
         session.ApplySource(new[] { Node(session, "items[1].b") }, false);
         Assert.Equal(16, session.Result.Length); Assert.NotNull(Node(session, "items[1].a").Target);
         Assert.Equal("2", Value(session, "items[1].b"));
+        Assert.Equal(0, session.UnassignedValueCount); Assert.True(session.CanSave);
     }
 
     [Fact]

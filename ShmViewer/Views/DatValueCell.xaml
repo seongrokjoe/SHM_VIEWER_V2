@@ -3,7 +3,7 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:local="clr-namespace:ShmViewer"
  Focusable="True" MouseDoubleClick="Value_DoubleClick" PreviewKeyDown="Value_KeyDown">
- <Grid MinHeight="20">
+ <Grid MinHeight="20" Background="Transparent">
   <TextBlock Text="{Binding EditableValue}" FontWeight="Bold" TextTrimming="CharacterEllipsis" ToolTip="{Binding EditableValue}">
    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Visible"/>
     <Style.Triggers><DataTrigger Binding="{Binding IsCellEditing}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>

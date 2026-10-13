@@ -24,6 +24,7 @@ public sealed class DatMergeNode
     public bool IsExpanded { get; set; }
     public bool HasDifference { get; internal set; }
     public bool HasUnresolved { get; internal set; }
+    public bool HasUnassignedValue { get; internal set; }
     public bool HasPendingDifference { get; internal set; }
     public int DifferenceCount { get; internal set; }
     public string Difference { get; internal set; } = string.Empty;
@@ -47,13 +48,15 @@ public sealed class DatMergeSession
     public IReadOnlyDictionary<string, BinaryField> RightFields { get; }
     public int IncludedCount { get; private set; }
     public int UnresolvedCount { get; private set; }
+    public int UnassignedValueCount { get; private set; }
     public bool IsDirty { get; private set; }
-    public bool CanSave => Result.Length > 0;
+    public bool CanSave => Result.Length > 0 && UnassignedValueCount == 0;
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
     private readonly List<DatMergeNode> _nodes = new();
     private readonly List<Snapshot> _undo = new();
     private readonly List<Snapshot> _redo = new();
+    private readonly Dictionary<(BinaryType, BinaryType), bool> _layoutMatches = new();
     private sealed record NodeState(DatMergeNode Node, BinaryField? Left, BinaryField? Right,
         BinaryField? Layout, byte[]? Bytes, ValueResolution Resolution, string? Branch, DatMergeNode[] Children);
     private sealed record Snapshot(NodeState[] Nodes, bool Dirty);
@@ -110,13 +113,61 @@ public sealed class DatMergeSession
         token.ThrowIfCancellationRequested();
         if (node.Left == null || node.Right == null) return;
         var a = node.Left; var b = node.Right;
+        if (IsCompatibleElement(node))
+        {
+            InitializeElement(node, token);
+            return;
+        }
         if (IsArrayElement(node) || a.Type.Kind == BinaryKind.Union || !a.IsContainer || !a.Children().Any() || a.Type.Kind != b.Type.Kind)
         {
-            if (SameValue(Left.Data, a, Right.Data, b)) IncludeAtomic(node, a, Left.Data, ValueResolution.Automatic);
+            if ((!IsArrayElement(node) || SameLayout(a.Type, b.Type)) && SameValue(Left.Data, a, Right.Data, b))
+                IncludeAtomic(node, a, Left.Data, ValueResolution.Automatic);
             return;
         }
         node.LayoutSource = a;
         foreach (var child in node.Children) Initialize(child, token);
+    }
+    private bool SameLayout(BinaryType a, BinaryType b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (_layoutMatches.TryGetValue((a, b), out var same)) return same;
+        same = a.Signature == b.Signature && a.Alignment == b.Alignment && a.ExplicitAlignment == b.ExplicitAlignment &&
+            (a.Element == null ? b.Element == null : b.Element != null && SameLayout(a.Element, b.Element)) &&
+            a.Members.Count == b.Members.Count && a.Members.Zip(b.Members).All(p =>
+                p.First.IsPadding == p.Second.IsPadding && p.First.ExplicitAlignment == p.Second.ExplicitAlignment &&
+                SameLayout(p.First.Type, p.Second.Type));
+        _layoutMatches[(a, b)] = same;
+        return same;
+    }
+    private bool IsCompatibleElement(DatMergeNode node)
+    {
+        static bool ContainsRecord(BinaryType type) => type.Kind == BinaryKind.Record ||
+            type.Kind == BinaryKind.Array && ContainsRecord(type.Element!);
+        return IsArrayElement(node) && node.Left != null && node.Right != null &&
+            ContainsRecord(node.Left.Type) && SameLayout(node.Left.Type, node.Right.Type);
+    }
+    private void InitializeElement(DatMergeNode node, CancellationToken token = default)
+    {
+        Clear(node);
+        node.LayoutSource = node.Left!;
+        // Unassigned storage is never displayed or saved as an implicit zero value.
+        node.ValueBytes = new byte[node.Left!.Type.Size];
+        void CopyCommon(DatMergeNode current)
+        {
+            token.ThrowIfCancellationRequested();
+            var source = current.Left!;
+            if (source.IsContainer && !current.IsUnion && current.Children.Count > 0)
+            {
+                foreach (var child in current.Children) CopyCommon(child);
+            }
+            else if (SameValue(Left.Data, source, Right.Data, current.Right!))
+            {
+                BinaryValueCodec.CopyConverted(Left.Data, source, node.ValueBytes,
+                    source with { Offset = source.Offset - node.Left.Offset });
+                Stamp(current, ValueResolution.Automatic);
+            }
+        }
+        CopyCommon(node);
     }
     private static BinaryField Local(BinaryField field) => new("", field.Type, 0, 0, field.BitWidth);
     private static void IncludeAtomic(DatMergeNode node, BinaryField source, byte[] data, ValueResolution resolution)
@@ -147,10 +198,30 @@ public sealed class DatMergeSession
 
     public bool CanSelectSource(DatMergeNode node, bool useLeft)
     {
-        if ((useLeft ? node.Left : node.Right) == null) return false;
+        var source = useLeft ? node.Left : node.Right;
+        if (source == null) return false;
+        DatMergeNode? element = null;
         for (var parent = node.Parent; parent != null; parent = parent.Parent)
-            if (IsArrayElement(parent) || parent.IsUnion) return false;
-        return true;
+        {
+            if (parent.IsUnion) return false;
+            if (IsArrayElement(parent)) element = parent;
+        }
+        return element == null || IsCompatibleElement(element) &&
+            (node.Target == null || source.BitWidth == node.Target.BitWidth &&
+                source.BitOffset == node.Target.BitOffset && SameLayout(source.Type, node.Target.Type));
+    }
+    public bool IsInternalValue(DatMergeNode node) => node.Parent != null && BlobOwner(node.Parent) != null;
+    private static bool HasUnassignedUnionAncestor(DatMergeNode node)
+    {
+        for (var parent = node.Parent; parent != null; parent = parent.Parent)
+            if (parent.IsUnion && parent.Target != null && parent.Resolution == ValueResolution.Unresolved) return true;
+        return false;
+    }
+    public bool CanEditValue(DatMergeNode node) => node.Target is { IsContainer: false } && !HasUnassignedUnionAncestor(node);
+    private static void RequireAssignedUnion(DatMergeNode node)
+    {
+        if (HasUnassignedUnionAncestor(node))
+            throw new InvalidDataException("미선택 union은 전체 원본, 전체 HEX 또는 명시적 0을 먼저 적용하세요.");
     }
     public bool? SourceSelection(DatMergeNode node, bool useLeft)
     {
@@ -170,8 +241,17 @@ public sealed class DatMergeSession
     public void ToggleSource(DatMergeNode node, bool useLeft)
     {
         if (!CanSelectSource(node, useLeft)) return;
-        if (SourceSelection(node, useLeft) == true) Remove(new[] { node });
+        if (SourceSelection(node, useLeft) == true)
+        {
+            if (IsInternalValue(node)) Change(() => Write(node, ClearValue, ValueResolution.Unresolved));
+            else Remove(new[] { node });
+        }
         else ApplySource(new[] { node }, useLeft);
+    }
+    private static void ClearValue(byte[] bytes, BinaryField field)
+    {
+        if (field.BitWidth > 0) BinaryValueCodec.WriteInteger(bytes, field, 0);
+        else bytes.AsSpan(field.Offset, field.ByteLength).Clear();
     }
 
     public void ApplySource(IEnumerable<DatMergeNode> nodes, bool useLeft) => Change(() =>
@@ -179,10 +259,12 @@ public sealed class DatMergeSession
         foreach (var node in TopLevel(nodes))
         {
             if ((useLeft ? node.Left : node.Right) == null) continue;
+            if (!CanSelectSource(node, useLeft))
+                throw new InvalidDataException("구조가 다른 배열 요소 또는 union 내부는 전체 원본을 선택하세요.");
             DatMergeNode? fixedParent = null;
             for (var p = node.Parent; p != null; p = p.Parent)
                 if ((IsArrayElement(p) || p.IsUnion) && p.Target == null) fixedParent = p;
-            if (fixedParent != null) { Apply(fixedParent, useLeft); Rebuild(); }
+            if (fixedParent != null) { InitializeElement(fixedParent); Rebuild(); }
             Apply(node, useLeft); Rebuild();
         }
     });
@@ -233,32 +315,32 @@ public sealed class DatMergeSession
     });
     public void SetValue(DatMergeNode node, string text, string encoding) => Change(() =>
     {
-        if (node.Target == null && HasFixedAncestor(node))
+        RequireAssignedUnion(node);
+        var fixedAncestor = FixedAncestor(node);
+        if (node.Target == null && fixedAncestor != null && !IsCompatibleElement(fixedAncestor))
             throw new InvalidDataException("먼저 배열 요소 또는 union 전체를 결과에 포함하세요.");
         EnsureIncluded(node);
         if (node.Target!.IsContainer && !node.IsUnion) throw new InvalidDataException("구조체·배열은 하위 값을 선택해 편집하세요.");
         Write(node, (bytes, field) => BinaryValueCodec.WriteText(bytes, field, text, encoding), ValueResolution.Manual);
     });
-    private static bool HasFixedAncestor(DatMergeNode node)
+    private static DatMergeNode? FixedAncestor(DatMergeNode node)
     {
+        DatMergeNode? ancestor = null;
         for (var parent = node.Parent; parent != null; parent = parent.Parent)
-            if (IsArrayElement(parent) || parent.IsUnion) return true;
-        return false;
+            if (IsArrayElement(parent) || parent.IsUnion) ancestor = parent;
+        return ancestor;
     }
     public void SetZero(IEnumerable<DatMergeNode> nodes) => Change(() =>
     {
         foreach (var node in TopLevel(nodes))
         {
+            RequireAssignedUnion(node);
             EnsureIncluded(node);
             void Zero(DatMergeNode current)
             {
                 if (current.Target == null) return;
                 if (BlobOwner(current) != null)
-                    Write(current, (bytes, field) =>
-                    {
-                        if (field.BitWidth > 0) BinaryValueCodec.WriteInteger(bytes, field, 0);
-                        else bytes.AsSpan(field.Offset, field.ByteLength).Clear();
-                    }, ValueResolution.Zero);
+                    Write(current, ClearValue, ValueResolution.Zero);
                 else foreach (var child in current.Children) Zero(child);
             }
             Zero(node);
@@ -267,10 +349,11 @@ public sealed class DatMergeSession
     private void EnsureIncluded(DatMergeNode node)
     {
         if (node.Target != null) return;
-        var ancestor = node;
-        for (var p = node.Parent; p != null; p = p.Parent)
-            if (IsArrayElement(p) || p.IsUnion) ancestor = p;
-        Apply(ancestor, ancestor.Left != null); Rebuild();
+        var ancestor = FixedAncestor(node) ?? node;
+        if (IsCompatibleElement(ancestor)) InitializeElement(ancestor);
+        else Apply(ancestor, ancestor.Left != null);
+        Rebuild();
+        RequireAssignedUnion(node);
         if (node.Target == null) throw new InvalidDataException("먼저 원본 항목을 결과에 추가하세요.");
     }
     private void Write(DatMergeNode node, Action<byte[], BinaryField> write, ValueResolution resolution)
@@ -309,6 +392,8 @@ public sealed class DatMergeSession
     {
         if (!union.IsUnion || branch.Parent != union) throw new InvalidDataException("union 멤버를 선택하세요.");
         EnsureIncluded(union);
+        if (union.Resolution == ValueResolution.Unresolved)
+            throw new InvalidDataException("미선택 union은 전체 원본, 전체 HEX 또는 명시적 0을 먼저 적용하세요.");
         if (branch.Target == null) throw new InvalidDataException("선택한 union 구조에 없는 멤버입니다.");
         Activate(branch);
     });
@@ -323,7 +408,7 @@ public sealed class DatMergeSession
     {
         var fields = useLeft ? LeftFields : RightFields;
         if (!fields.TryGetValue(sourcePath, out var source)) throw new InvalidDataException("원본 경로를 찾을 수 없습니다: " + sourcePath);
-        if (node.Parent != null && BlobOwner(node.Parent) != null)
+        if (FixedAncestor(node) != null)
             throw new InvalidDataException("배열 요소/union 내부 연결은 구조 전체에서 지정하세요.");
         Clear(node);
         void Assign(DatMergeNode current, BinaryField? field)
@@ -355,7 +440,7 @@ public sealed class DatMergeSession
         if (template.Type.Kind == BinaryKind.Array)
         {
             var element = children[0].Type!;
-            if (children.Any(p => p.Type!.Signature != element.Signature || p.Type.Alignment != element.Alignment))
+            if (children.Any(p => !SameLayout(p.Type!, element)))
                 throw new InvalidDataException($"{node.Path}: 서로 다른 구조의 배열 요소를 혼합할 수 없습니다. 버전1 또는 버전2 배열 전체를 적용하세요.");
             return node.ResultType = BinaryLayoutBuilder.Array(element, children.Count);
         }
@@ -459,12 +544,14 @@ public sealed class DatMergeSession
     }
     public void Save(string path)
     {
+        if (UnassignedValueCount > 0)
+            throw new InvalidDataException($"값 미선택 {UnassignedValueCount:N0}개: 모든 값을 결정한 후 저장하세요.");
         if (!CanSave) throw new InvalidDataException("버전3에 저장할 항목을 먼저 추가하세요.");
         DatDocument.SaveAtomic(path, Result, Left.FilePath, Right.FilePath); MarkSaved();
     }
     public void Refresh()
     {
-        IncludedCount = 0; UnresolvedCount = 0;
+        IncludedCount = 0; UnresolvedCount = 0; UnassignedValueCount = 0;
         foreach (var node in _nodes.AsEnumerable().Reverse())
         {
             var a = node.Left; var b = node.Right;
@@ -501,10 +588,13 @@ public sealed class DatMergeSession
             node.HasDifference = reasons.Count > 0;
             node.DifferenceCount = childCount > 0 ? childCount : node.HasDifference ? 1 : 0;
             node.Difference = reasons.Count == 0 ? "동일" : string.Join(" · ", reasons);
-            node.HasUnresolved = node.Target == null ||
+            node.HasUnassignedValue = node.Target != null && (node.IsResultLeaf
+                ? node.Resolution == ValueResolution.Unresolved
+                : node.Children.Any(c => c.HasUnassignedValue));
+            node.HasUnresolved = node.Target == null || node.HasUnassignedValue ||
                 !node.IsUnion && !IsArrayElement(node) && node.Children.Any(c => c.HasUnresolved);
             // A selected fixed layout resolves alternative members absent from that layout.
-            node.HasPendingDifference = BlobOwner(node) == null &&
+            node.HasPendingDifference = node.HasUnassignedValue || BlobOwner(node) == null &&
                 (node.HasDifference && (node.Target == null || node.Target.Type.Size == 0) ||
                  node.Children.Any(c => c.HasPendingDifference));
             var included = node.Children.Where(c => c.Target != null).ToArray();
@@ -513,6 +603,8 @@ public sealed class DatMergeSession
             {
                 var origins = included.Select(c => c.AppliedResolution).Where(r => r != ValueResolution.Automatic).Distinct().ToArray();
                 node.AppliedResolution = origins.Length == 0 ? ValueResolution.Automatic : origins.Length == 1 ? origins[0] : ValueResolution.Mixed;
+                if (node.HasUnassignedValue && included.Any(c => c.AppliedResolution != ValueResolution.Unresolved))
+                    node.AppliedResolution = ValueResolution.Mixed;
             }
         }
         void Count(DatMergeNode node)
@@ -524,5 +616,15 @@ public sealed class DatMergeSession
             else foreach (var child in node.Children) Count(child);
         }
         Count(Root);
+        void CountUnassigned(DatMergeNode node)
+        {
+            if (node.Target == null) return;
+            if (node.IsResultLeaf)
+            {
+                if (node.Resolution == ValueResolution.Unresolved) UnassignedValueCount++;
+            }
+            else foreach (var child in node.Children) CountUnassigned(child);
+        }
+        CountUnassigned(Root);
     }
 }

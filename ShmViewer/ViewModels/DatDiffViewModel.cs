@@ -100,7 +100,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     public IEnumerable<DatMergeNode> UnionBranches => SelectedRow?.Node.IsUnion == true ? SelectedRow.Node.Children : Enumerable.Empty<DatMergeNode>();
     public bool HasTargetSelection => CanEdit && SelectedRow != null;
     public string ResultSummary => Session == null ? "공통 항목을 자동 포함한 뒤 원하는 원본 항목을 추가하세요." :
-        $"{Session.Result.Length:N0} bytes · 포함 {Session.IncludedCount:N0}개 · 미포함 {Session.UnresolvedCount:N0}개";
+        $"{Session.Result.Length:N0} bytes · 포함 {Session.IncludedCount:N0}개 · 미포함 {Session.UnresolvedCount:N0}개 · 값 미선택 {Session.UnassignedValueCount:N0}개" +
+        (Session.UnassignedValueCount > 0 ? " · 모든 값을 결정해야 저장할 수 있습니다." : "");
     public bool CanSave => CanEditValues && !HasPendingEdit && !HasCellEdit && string.IsNullOrEmpty(EditorError) &&
         (LoadOnly ? ViewerSession != null : Session?.CanSave == true);
     public bool CanDiff => !_disposed && !IsBusy;
@@ -314,7 +315,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         try
         {
             var node = SelectedRow?.Node;
-            EditorText = node?.Target != null && Session != null && node.Resolution != ValueResolution.Unresolved
+            EditorText = node?.Target != null && Session != null && !node.HasUnassignedValue && node.Resolution != ValueResolution.Unresolved
                 ? BinaryValueCodec.Format(Session.Result, node.Target, EncodingName, ShowHex || node.IsUnion) : string.Empty;
             if (node?.Target != null && Session != null && node.Resolution != ValueResolution.Unresolved &&
                 (node.Target.BitWidth > 0 || node.Target.Type.Kind == BinaryKind.Enum && !ShowHex))

@@ -39,7 +39,8 @@ public partial class DatDiffViewModel
         CellEditTarget = row.EditTarget;
         var field = row.EditTarget is DatMergeNode node ? node.Target! : (BinaryField)row.EditTarget;
         var data = LoadOnly ? ViewerSession!.Data : Session!.Result;
-        CellEditorText = BinaryValueCodec.FormatForEdit(data, field, EncodingName, ShowHex);
+        CellEditorText = row.EditTarget is DatMergeNode { HasUnassignedValue: true }
+            ? string.Empty : BinaryValueCodec.FormatForEdit(data, field, EncodingName, ShowHex);
         CellEditorError = string.Empty;
         RefreshCellEditors();
         return true;

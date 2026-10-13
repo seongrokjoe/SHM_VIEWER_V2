@@ -10,7 +10,7 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
     public DatMergeNode Node { get; }
     public DatRowViewModel(DatDiffViewModel owner, DatMergeNode node) { Owner = owner; Node = node; }
     public object EditTarget => Node;
-    public bool CanEditValue => Owner.CanEdit && Node.Target is { IsContainer: false };
+    public bool CanEditValue => Owner.CanEdit && Owner.Session?.CanEditValue(Node) == true;
     public string EditableValue => TargetValue;
     public bool IsCellEditing => ReferenceEquals(Owner.CellEditTarget, Node);
     internal void RefreshValue()
@@ -39,6 +39,11 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
     public bool ShowChoices => (Node.HasDifference || Node.HasUnresolved) && (HasLeft || HasRight);
     public bool? LeftChecked => Owner.Session == null ? false : Owner.Session.SourceSelection(Node, true);
     public bool? RightChecked => Owner.Session == null ? false : Owner.Session.SourceSelection(Node, false);
+    public string LeftSelectionHint => SelectionHint("버전1");
+    public string RightSelectionHint => SelectionHint("버전2");
+    private string SelectionHint(string version) => Owner.Session?.IsInternalValue(Node) == true
+        ? $"{version} 값 적용 / 체크 해제 시 구조를 유지하고 값 선택 해제"
+        : $"{version} 적용 / 체크 해제 시 결과에서 제외";
     internal void RefreshSelection()
     {
         OnPropertyChanged(nameof(LeftChecked)); OnPropertyChanged(nameof(RightChecked));
@@ -49,15 +54,17 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
     public string LeftValue => Display(Owner.Session!.Left.Data, Node.Left);
     public string RightValue => Display(Owner.Session!.Right.Data, Node.Right);
     public string TargetValue => Node.Target == null ? "미포함" :
+        Node.HasUnassignedValue && Node.IsResultLeaf ? string.Empty :
         (!Owner.Session!.IsActive(Node) ? "(비활성 union 보기) " : "") + Display(Owner.Session!.Result, Node.Target);
     private ValueResolution Origin => Node.AppliedResolution;
-    public string ResultState => Node.Target == null || Node.Target.Type.Size == 0 ? "○ 미포함" : !Owner.Session!.IsActive(Node) ? "공유 바이트 · 비활성 보기" :
+    public string ResultState => Node.Target == null || Node.Target.Type.Size == 0 ? "○ 미포함" :
+        Node.HasUnassignedValue && Node.IsResultLeaf ? "○ 값 미선택" : !Owner.Session!.IsActive(Node) ? "공유 바이트 · 비활성 보기" :
         (Origin switch
         {
             ValueResolution.Automatic => "✓ 공통 자동 포함", ValueResolution.Version1 => "✓ 버전1 적용 완료",
             ValueResolution.Version2 => "✓ 버전2 적용 완료", ValueResolution.Manual => "직접 입력", ValueResolution.Zero => "직접 입력 · 0 적용",
             ValueResolution.Mixed => "혼합 적용", _ => "포함"
-        }) + (Node.HasUnresolved ? " · 일부 적용" : "");
+        }) + (Node.HasUnassignedValue ? " · 값 미선택 있음" : Node.HasUnresolved ? " · 일부 적용" : "");
     public string State => Node.Difference + " · " + ResultState;
     public bool SizeDiffers => Node.DifferenceKinds.HasFlag(DatDifferenceKind.Size);
     public bool ValueDiffers => (Node.DifferenceKinds & (DatDifferenceKind.Value | DatDifferenceKind.RawBytes)) != 0;

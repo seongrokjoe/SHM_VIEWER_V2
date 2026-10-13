@@ -72,7 +72,7 @@
     <DataGridTemplateColumn Header="버전1 · 원본" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
      <Border Background="{Binding LeftBackground}" BorderBrush="#8A9BAE" BorderThickness="0,0,2,0" Padding="6" MinHeight="86">
       <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="25"/><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
-       <views:SourceSelectionCheckBox IsChecked="{Binding LeftChecked, Mode=OneWay}" IsThreeState="True" Command="{Binding Owner.CheckLeftCommand}" CommandParameter="{Binding}" IsEnabled="{Binding HasLeft}" VerticalAlignment="Top" Margin="2,3,0,0" ToolTip="버전1 적용 / 체크 해제 시 결과에서 제외">
+        <views:SourceSelectionCheckBox IsChecked="{Binding LeftChecked, Mode=OneWay}" IsThreeState="True" Command="{Binding Owner.CheckLeftCommand}" CommandParameter="{Binding}" IsEnabled="{Binding HasLeft}" VerticalAlignment="Top" Margin="2,3,0,0" ToolTip="{Binding LeftSelectionHint}">
         <CheckBox.Style><Style TargetType="CheckBox"><Setter Property="Visibility" Value="Visible"/><Style.Triggers><DataTrigger Binding="{Binding ShowChoices}" Value="False"><Setter Property="Visibility" Value="Hidden"/></DataTrigger></Style.Triggers></Style></CheckBox.Style>
        </views:SourceSelectionCheckBox>
        <Button Grid.Column="1" Content="{Binding ToggleText}" Command="{Binding Owner.ToggleCommand}" CommandParameter="{Binding}" Width="20" Height="22" VerticalAlignment="Top" Margin="{Binding Indent}" Background="Transparent" Foreground="#CCC" BorderThickness="0"/>
@@ -87,7 +87,7 @@
     <DataGridTemplateColumn Header="버전2 · 비교 원본" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
      <Border Background="{Binding RightBackground}" BorderBrush="#8A9BAE" BorderThickness="0,0,2,0" Padding="6" MinHeight="86">
       <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="25"/><ColumnDefinition/></Grid.ColumnDefinitions>
-       <views:SourceSelectionCheckBox IsChecked="{Binding RightChecked, Mode=OneWay}" IsThreeState="True" Command="{Binding Owner.CheckRightCommand}" CommandParameter="{Binding}" IsEnabled="{Binding HasRight}" VerticalAlignment="Top" Margin="2,3,0,0" ToolTip="버전2 적용 / 체크 해제 시 결과에서 제외">
+        <views:SourceSelectionCheckBox IsChecked="{Binding RightChecked, Mode=OneWay}" IsThreeState="True" Command="{Binding Owner.CheckRightCommand}" CommandParameter="{Binding}" IsEnabled="{Binding HasRight}" VerticalAlignment="Top" Margin="2,3,0,0" ToolTip="{Binding RightSelectionHint}">
         <CheckBox.Style><Style TargetType="CheckBox"><Setter Property="Visibility" Value="Visible"/><Style.Triggers><DataTrigger Binding="{Binding ShowChoices}" Value="False"><Setter Property="Visibility" Value="Hidden"/></DataTrigger></Style.Triggers></Style></CheckBox.Style>
        </views:SourceSelectionCheckBox>
        <StackPanel Grid.Column="1"><TextBlock Text="{Binding RightPath}" ToolTip="{Binding RightPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>

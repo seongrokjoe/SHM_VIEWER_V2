@@ -62,7 +62,7 @@ public sealed class DatSelectionTests
         var session = new DatMergeSession(Document(header, ("items[0].x", "1"), ("items[0].y", "2")), Document(header, ("items[0].x", "3"), ("items[0].y", "4")));
         var element = Node(session, "items[0]"); var x = Node(session, "items[0].x"); var y = Node(session, "items[0].y");
         session.ToggleSource(element, true);
-        Assert.False(session.CanSelectSource(x, true));
+        Assert.True(session.CanSelectSource(x, true));
         session.SetValue(x, "99", "ASCII");
         Assert.Equal(ValueResolution.Manual, x.AppliedResolution); Assert.Equal(ValueResolution.Version1, y.AppliedResolution);
         Assert.Equal(ValueResolution.Mixed, element.AppliedResolution);
