@@ -95,8 +95,8 @@ public sealed class DatSelectionTests
         var right = Document("struct Root { int value; long long size; char text[4]; };", ("value", "2"), ("text", "hex:00010000"));
         var session = new DatMergeSession(left, right);
         Assert.Equal(DatDifferenceKind.Value, Node(session, "value").DifferenceKinds);
-        Assert.Equal(DatDifferenceKind.Size | DatDifferenceKind.Type, Node(session, "size").DifferenceKinds);
-        Assert.Equal(DatDifferenceKind.RawBytes, Node(session, "text").DifferenceKinds);
-        Assert.Equal(DatDifferenceKind.Size, session.Root.DifferenceKinds);
+        Assert.Equal(DatDifferenceKind.Size | DatDifferenceKind.Type | DatDifferenceKind.Layout, Node(session, "size").DifferenceKinds);
+        Assert.Equal(DatDifferenceKind.RawBytes | DatDifferenceKind.Layout, Node(session, "text").DifferenceKinds);
+        Assert.Equal(DatDifferenceKind.Size | DatDifferenceKind.Layout, session.Root.DifferenceKinds);
     }
 }

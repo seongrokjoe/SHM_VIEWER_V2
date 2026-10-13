@@ -5,7 +5,7 @@ namespace ShmViewer.Core.Dat;
 public enum ValueResolution { Unresolved, Automatic, Version1, Version2, Manual, Zero, Mixed }
 
 [Flags]
-public enum DatDifferenceKind { None = 0, Size = 1, Value = 2, Type = 4, Members = 8, RawBytes = 16, LeftOnly = 32, RightOnly = 64 }
+public enum DatDifferenceKind { None = 0, Size = 1, Value = 2, Type = 4, Members = 8, RawBytes = 16, LeftOnly = 32, RightOnly = 64, Layout = 128 }
 
 public sealed class DatMergeNode
 {
@@ -23,6 +23,8 @@ public sealed class DatMergeNode
     public string? ActiveUnionBranch { get; internal set; }
     public bool IsExpanded { get; set; }
     public bool HasDifference { get; internal set; }
+    public bool HasDirectStructureDifference { get; internal set; }
+    public bool HasStructureDifference { get; internal set; }
     public bool HasUnresolved { get; internal set; }
     public bool HasUnassignedValue { get; internal set; }
     public bool HasPendingDifference { get; internal set; }
@@ -36,7 +38,7 @@ public sealed class DatMergeNode
     internal BinaryType? ResultType { get; set; }
 }
 
-public sealed class DatMergeSession
+public sealed partial class DatMergeSession
 {
     public DatDocument Left { get; }
     public DatDocument Right { get; }
@@ -61,13 +63,16 @@ public sealed class DatMergeSession
         BinaryField? Layout, byte[]? Bytes, ValueResolution Resolution, string? Branch, DatMergeNode[] Children);
     private sealed record Snapshot(NodeState[] Nodes, bool Dirty);
 
-    public DatMergeSession(DatDocument left, DatDocument right, CancellationToken cancellationToken = default)
+    public DatMergeSession(DatDocument left, DatDocument right, CancellationToken cancellationToken = default,
+        DatComparisonMode mode = DatComparisonMode.Values, DatSourceVersion baseVersion = DatSourceVersion.Version1)
     {
         Left = left; Right = right;
         LeftFields = Index(left.Root, cancellationToken); RightFields = Index(right.Root, cancellationToken);
         Root = Build(left.Root, right.Root, null, string.Empty, cancellationToken);
         Root.IsExpanded = true;
-        Initialize(Root, cancellationToken);
+        ComparisonMode = mode; BaseVersion = baseVersion;
+        if (mode == DatComparisonMode.Structure) InitializeStructure(Root, cancellationToken);
+        else Initialize(Root, cancellationToken);
         Rebuild(); IsDirty = true;
     }
 
@@ -131,10 +136,10 @@ public sealed class DatMergeSession
     {
         if (ReferenceEquals(a, b)) return true;
         if (_layoutMatches.TryGetValue((a, b), out var same)) return same;
-        same = a.Signature == b.Signature && a.Alignment == b.Alignment && a.ExplicitAlignment == b.ExplicitAlignment &&
+        same = a.Signature == b.Signature && a.Pack == b.Pack && a.Alignment == b.Alignment && a.ExplicitAlignment == b.ExplicitAlignment &&
             (a.Element == null ? b.Element == null : b.Element != null && SameLayout(a.Element, b.Element)) &&
             a.Members.Count == b.Members.Count && a.Members.Zip(b.Members).All(p =>
-                p.First.IsPadding == p.Second.IsPadding && p.First.ExplicitAlignment == p.Second.ExplicitAlignment &&
+                p.First.IsPadding == p.Second.IsPadding && p.First.IsAnonymous == p.Second.IsAnonymous && p.First.ExplicitAlignment == p.Second.ExplicitAlignment &&
                 SameLayout(p.First.Type, p.Second.Type));
         _layoutMatches[(a, b)] = same;
         return same;
@@ -217,7 +222,7 @@ public sealed class DatMergeSession
             if (parent.IsUnion && parent.Target != null && parent.Resolution == ValueResolution.Unresolved) return true;
         return false;
     }
-    public bool CanEditValue(DatMergeNode node) => node.Target is { IsContainer: false } && !HasUnassignedUnionAncestor(node);
+    public bool CanEditValue(DatMergeNode node) => GetValueEditOptions(node).Count > 0;
     private static void RequireAssignedUnion(DatMergeNode node)
     {
         if (HasUnassignedUnionAncestor(node))
@@ -274,7 +279,7 @@ public sealed class DatMergeSession
         if (source == null) return;
         var data = useLeft ? Left.Data : Right.Data;
         var resolution = useLeft ? ValueResolution.Version1 : ValueResolution.Version2;
-        if (node.Left != null && node.Right != null && SameValue(Left.Data, node.Left, Right.Data, node.Right))
+        if (ComparisonMode == DatComparisonMode.Values && node.Left != null && node.Right != null && SameValue(Left.Data, node.Left, Right.Data, node.Right))
             resolution = ValueResolution.Automatic;
         var owner = node.Parent == null ? null : BlobOwner(node.Parent);
         if (owner != null)
@@ -300,8 +305,8 @@ public sealed class DatMergeSession
             }
             return;
         }
-        if (node.ValueBytes != null || node.LayoutSource?.Type.Kind != BinaryKind.Record) Clear(node);
-        node.LayoutSource = node.Left?.Type.Kind == BinaryKind.Record ? node.Left : source;
+        if (ComparisonMode == DatComparisonMode.Structure || node.ValueBytes != null || node.LayoutSource?.Type.Kind != BinaryKind.Record) Clear(node);
+        node.LayoutSource = ComparisonMode == DatComparisonMode.Structure ? source : node.Left?.Type.Kind == BinaryKind.Record ? node.Left : source;
         foreach (var child in node.Children) Apply(child, useLeft);
     }
     public void Remove(IEnumerable<DatMergeNode> nodes) => Change(() =>
@@ -313,13 +318,10 @@ public sealed class DatMergeSession
             Clear(node);
         }
     });
-    public void SetValue(DatMergeNode node, string text, string encoding) => Change(() =>
+    public void SetValue(DatMergeNode node, string text, string encoding, DatSourceVersion? format = null) => Change(() =>
     {
         RequireAssignedUnion(node);
-        var fixedAncestor = FixedAncestor(node);
-        if (node.Target == null && fixedAncestor != null && !IsCompatibleElement(fixedAncestor))
-            throw new InvalidDataException("먼저 배열 요소 또는 union 전체를 결과에 포함하세요.");
-        EnsureIncluded(node);
+        PrepareValueLayout(node, format);
         if (node.Target!.IsContainer && !node.IsUnion) throw new InvalidDataException("구조체·배열은 하위 값을 선택해 편집하세요.");
         Write(node, (bytes, field) => BinaryValueCodec.WriteText(bytes, field, text, encoding), ValueResolution.Manual);
     });
@@ -447,12 +449,14 @@ public sealed class DatMergeSession
         if (template.Type.Kind != BinaryKind.Record)
             throw new InvalidDataException($"{node.Path}: 이 항목은 구조 전체를 먼저 선택하세요.");
         var members = new List<BinaryMember>();
-        foreach (var child in node.Children.Where(c => c.ResultType != null))
+        var order = template.Type.Members.Select((m, i) => (m.Name, i)).GroupBy(p => p.Name).ToDictionary(g => g.Key, g => g.First().i);
+        foreach (var child in node.Children.Where(c => c.ResultType != null).OrderBy(c => order.GetValueOrDefault(c.Key, int.MaxValue)))
         {
             var source = child.LayoutSource ?? child.Left ?? child.Right!;
             var definition = (source == child.Right ? node.Right : node.Left)?.Type.Members.FirstOrDefault(m => m.Name == child.Key)
                 ?? template.Type.Members.FirstOrDefault(m => m.Name == child.Key);
-            members.Add(new(child.Key, child.ResultType!, 0, BitWidth: source.BitWidth, ExplicitAlignment: definition?.ExplicitAlignment ?? 0));
+            members.Add(new(child.Key, child.ResultType!, 0, BitWidth: source.BitWidth,
+                IsAnonymous: definition?.IsAnonymous ?? false, ExplicitAlignment: definition?.ExplicitAlignment ?? 0));
         }
         // Preserve unnamed bitfield storage and barriers in their original declaration slots.
         foreach (var padding in template.Type.Members.Where(m => m.IsPadding))
@@ -583,6 +587,13 @@ public sealed class DatMergeSession
                 }
             }
             node.DifferenceKinds = kinds;
+            if (HasDirectLayoutDifference(node))
+            {
+                kinds |= DatDifferenceKind.Layout; reasons.Add("배치 차이");
+                node.DifferenceKinds = kinds;
+            }
+            node.HasDirectStructureDifference = (kinds & ~(DatDifferenceKind.Value | DatDifferenceKind.RawBytes)) != 0;
+            node.HasStructureDifference = node.HasDirectStructureDifference || node.Children.Any(c => c.HasStructureDifference);
             var childCount = node.Children.Sum(c => c.DifferenceCount);
             if (childCount > 0) reasons.Add($"하위 차이 {childCount:N0}개");
             node.HasDifference = reasons.Count > 0;

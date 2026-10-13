@@ -143,24 +143,33 @@
                 </Grid>
 
                 <ListBox x:Name="RealTimeHeaderList" Grid.Row="1" ItemsSource="{Binding HeaderFiles}" SelectionMode="Extended"
-                         PreviewKeyDown="Headers_KeyDown" MaxHeight="120" Margin="0,6,0,0" Background="Transparent" BorderThickness="0"
+                         PreviewKeyDown="Headers_KeyDown" MaxHeight="96" Margin="0,6,0,0" Background="Transparent" BorderThickness="0"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ListBox.ItemsPanel>
+                    <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Left"/><Setter Property="Padding" Value="0"/>
+                        <Setter Property="MaxWidth" Value="240"/>
+                    </Style></ListBox.ItemContainerStyle>
                     <ListBox.GroupStyle><GroupStyle>
-                        <GroupStyle.HeaderTemplate><DataTemplate><TextBlock Text="{Binding Name}" Foreground="#9CDCFE" FontSize="11" Margin="0,3"/></DataTemplate></GroupStyle.HeaderTemplate>
-                        <GroupStyle.Panel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></GroupStyle.Panel>
+                        <GroupStyle.HeaderTemplate><DataTemplate><TextBlock Text="{Binding Name}" ToolTip="{Binding Name}" TextTrimming="CharacterEllipsis" Foreground="#9CDCFE" FontSize="11" Margin="0,3"/></DataTemplate></GroupStyle.HeaderTemplate>
+                        <GroupStyle.Panel><ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate></GroupStyle.Panel>
                     </GroupStyle></ListBox.GroupStyle>
                     <ListBox.ItemTemplate><DataTemplate>
-                        <Border BorderBrush="#555" BorderThickness="1" Margin="0,2,4,2" Padding="6,3" ToolTip="{Binding Path}">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock>
+                        <Border BorderBrush="#555" BorderThickness="1" Margin="0,2,4,2" Padding="6,3" MaxWidth="236">
+                            <Border.ToolTip><ToolTip DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"><StackPanel><TextBlock Text="{Binding Path}"/><TextBlock Text="{Binding Error}" Foreground="#FF7777"/></StackPanel></ToolTip></Border.ToolTip>
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="✕" Background="Transparent" Foreground="#888" BorderThickness="0" Margin="6,0,0,0"
+                                    Command="{Binding DataContext.RemoveHeaderFileCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                                <TextBlock DockPanel.Dock="Left" Margin="0,0,5,0"><TextBlock.Style><Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="●"/><Setter Property="Foreground" Value="#80B98A"/>
+                                    <Style.Triggers><DataTrigger Binding="{Binding IsAvailable}" Value="False"><Setter Property="Text" Value="!"/><Setter Property="Foreground" Value="#FF7777"/></DataTrigger></Style.Triggers>
+                                </Style></TextBlock.Style></TextBlock>
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis">
                                     <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Foreground" Value="#DCDCAA"/><Style.Triggers>
                                         <DataTrigger Binding="{Binding IsAvailable}" Value="False"><Setter Property="Foreground" Value="#FF7777"/></DataTrigger>
                                     </Style.Triggers></Style></TextBlock.Style>
-                                    <Run Text="{Binding Name, Mode=OneWay}"/><Run Text=" "/><Run Text="{Binding Error, Mode=OneWay}"/>
                                 </TextBlock>
-                                <Button Content="✕" Background="Transparent" Foreground="#888" BorderThickness="0" Margin="6,0,0,0"
-                                    Command="{Binding DataContext.RemoveHeaderFileCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
-                            </StackPanel>
+                            </DockPanel>
                         </Border>
                     </DataTemplate></ListBox.ItemTemplate>
                 </ListBox>

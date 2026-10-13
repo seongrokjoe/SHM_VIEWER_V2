@@ -152,6 +152,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         if ((HasResults || Left.HasInput || Right.HasInput) && !_confirm("DAT 화면의 입력 설정, 로드된 정보와 편집 결과를 모두 초기화하시겠습니까?")) return;
         ClearResults(); Left.Reset(); Right.Reset();
         _dataKind = SctcDataKind.Run; _loadOnly = false; _viewerUsesLeft = true;
+        _comparisonMode = DatComparisonMode.Values; BaseVersion = DatSourceVersion.Version1; AdvancedEditingExpanded = false;
+        NotifyComparisonMode();
         DifferencesOnly = false; EncodingName = "ASCII"; ShowHex = false; Status = InitialStatus;
         ShowViewerPath = ShowViewerType = ShowViewerSize = ShowViewerValue = true; ShowViewerOffset = false;
         OnPropertyChanged(nameof(DataKind)); OnPropertyChanged(nameof(IsRunData)); OnPropertyChanged(nameof(IsInitData));
@@ -197,7 +199,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
                     catch (Exception ex) { throw new InvalidDataException(input.Label + ": " + ex.Message, ex); }
                 }
                 var a = Load(left); var b = Load(right); token.ThrowIfCancellationRequested();
-                return new DatMergeSession(a, b, token);
+                return new DatMergeSession(a, b, token, ComparisonMode, BaseVersion);
             }, token);
             if (_disposed || token.IsCancellationRequested) return;
             Session = session; HasPendingEdit = false; EditorError = string.Empty; _selectedRow = null;
@@ -257,8 +259,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     private void NavigateDifference(int direction)
     {
         if (!CanEdit || Session == null) return;
-        var candidates = Session.Nodes.Where(n => (n.HasDifference || n.HasUnresolved) &&
-            (n.Children.Count == 0 || n.IsUnion || n.Children.All(c => !c.HasDifference && !c.HasUnresolved))).ToList();
+        var candidates = Session.Nodes.Where(n => MatchesDifference(n) &&
+            (n.Children.Count == 0 || n.IsUnion || n.Children.All(c => !MatchesDifference(c)))).ToList();
         if (candidates.Count == 0) return;
         var current = SelectedRow == null ? -1 : candidates.IndexOf(SelectedRow.Node);
         var index = current < 0 ? (direction > 0 ? 0 : candidates.Count - 1) : (current + direction + candidates.Count) % candidates.Count;
@@ -282,7 +284,11 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanEdit))] private void MapLeft() => Edit(() => { if (SelectedRow != null) Session?.Map(SelectedRow.Node, true, LeftMapping); });
     [RelayCommand(CanExecute = nameof(CanEdit))] private void MapRight() => Edit(() => { if (SelectedRow != null) Session?.Map(SelectedRow.Node, false, RightMapping); });
     [RelayCommand(CanExecute = nameof(CanEdit))] private void SelectBranch() => Edit(() => { if (SelectedRow != null && SelectedUnionBranch != null) Session?.SelectBranch(SelectedRow.Node, SelectedUnionBranch); });
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void ApplyValue() => Edit(() => { if (SelectedRow != null) Session?.SetValue(SelectedRow.Node, EditorText, EncodingName); }, true);
+    [RelayCommand(CanExecute = nameof(CanEdit))] private void ApplyValue()
+    {
+        if (SelectedRow?.CanEditValue == true && TryChooseValueFormat(SelectedRow.Node, out var format))
+            Edit(() => Session!.SetValue(SelectedRow.Node, EditorText, EncodingName, format), true);
+    }
     [RelayCommand(CanExecute = nameof(CanEdit))] private void CancelEdit() { LoadEditor(); RebuildRows(); }
     [RelayCommand(CanExecute = nameof(CanUndo))] private void Undo() => EditHistory(true);
     [RelayCommand(CanExecute = nameof(CanRedo))] private void Redo() => EditHistory(false);
@@ -315,9 +321,9 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         try
         {
             var node = SelectedRow?.Node;
-            EditorText = node?.Target != null && Session != null && !node.HasUnassignedValue && node.Resolution != ValueResolution.Unresolved
+            EditorText = SelectedRow?.HideCommonValue != true && node?.Target != null && Session != null && !node.HasUnassignedValue && node.Resolution != ValueResolution.Unresolved
                 ? BinaryValueCodec.Format(Session.Result, node.Target, EncodingName, ShowHex || node.IsUnion) : string.Empty;
-            if (node?.Target != null && Session != null && node.Resolution != ValueResolution.Unresolved &&
+            if (SelectedRow?.HideCommonValue != true && node?.Target != null && Session != null && node.Resolution != ValueResolution.Unresolved &&
                 (node.Target.BitWidth > 0 || node.Target.Type.Kind == BinaryKind.Enum && !ShowHex))
                 EditorText = BinaryValueCodec.ReadInteger(Session.Result, node.Target).ToString(System.Globalization.CultureInfo.InvariantCulture);
             LeftMapping = node?.Left?.Path ?? string.Empty; RightMapping = node?.Right?.Path ?? string.Empty;
@@ -332,7 +338,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         if (DifferencesOnly && Session != null)
         {
             foreach (var node in Session.Nodes) _unfilteredExpansion.TryAdd(node, node.IsExpanded);
-            var matches = Session.Nodes.Where(n => n.HasDifference || n.HasUnresolved).ToHashSet();
+            var matches = Session.Nodes.Where(MatchesDifference).ToHashSet();
             foreach (var node in matches.Where(n => !_filterMatches.Contains(n)))
                 for (var parent = node.Parent; parent != null; parent = parent.Parent) parent.IsExpanded = true;
             _filterMatches.Clear(); _filterMatches.UnionWith(matches);
@@ -351,11 +357,20 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         var rows = new List<DatRowViewModel>();
         void Add(DatMergeNode node)
         {
-            if (DifferencesOnly && !node.HasDifference && !node.HasUnresolved && !editingPath.Contains(node)) return;
+            if (DifferencesOnly && !MatchesDifference(node) && !editingPath.Contains(node)) return;
             rows.Add(new(this, node));
             if (node.IsExpanded) foreach (var child in node.Children) Add(child);
         }
         if (Session != null) Add(Session.Root);
+        bool Visible(DatMergeNode n) => !DifferencesOnly || MatchesDifference(n) || editingPath.Contains(n);
+        foreach (var row in rows)
+        {
+            row.HasVisibleChildren = row.Node.Children.Any(Visible);
+            var branches = new List<bool>();
+            for (var n = row.Node; n.Parent != null; n = n.Parent)
+                branches.Add(n.Parent.Children.Where(Visible).LastOrDefault() != n);
+            branches.Reverse(); row.TreeBranches = branches.ToArray();
+        }
         _rebuildingRows = true;
         try
         {
@@ -379,6 +394,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanUndo)); OnPropertyChanged(nameof(CanRedo)); OnPropertyChanged(nameof(SaveLabel));
         OnPropertyChanged(nameof(ExecuteLabel)); OnPropertyChanged(nameof(ViewerSummary)); OnPropertyChanged(nameof(ViewerLeftOption));
         OnPropertyChanged(nameof(ResultSummary));
+        OnPropertyChanged(nameof(ComparisonColumnMinWidth));
         DiffCommand.NotifyCanExecuteChanged(); SaveCommand.NotifyCanExecuteChanged();
         ResetCommand.NotifyCanExecuteChanged();
         foreach (var command in new IRelayCommand[] { ToggleCommand, NextDifferenceCommand, PreviousDifferenceCommand,

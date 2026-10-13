@@ -10,7 +10,10 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
     public DatMergeNode Node { get; }
     public DatRowViewModel(DatDiffViewModel owner, DatMergeNode node) { Owner = owner; Node = node; }
     public object EditTarget => Node;
-    public bool CanEditValue => Owner.CanEdit && Owner.Session?.CanEditValue(Node) == true;
+    public bool CanEditValue => !HideCommonValue && Owner.CanEdit && Owner.Session?.CanEditValue(Node) == true;
+    public bool HideCommonValue => Owner.StructureComparison && !Node.HasStructureDifference;
+    public bool[] TreeBranches { get; internal set; } = Array.Empty<bool>();
+    public bool HasVisibleChildren { get; internal set; }
     public string EditableValue => TargetValue;
     public bool IsCellEditing => ReferenceEquals(Owner.CellEditTarget, Node);
     internal void RefreshValue()
@@ -18,7 +21,7 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
         OnPropertyChanged(nameof(TargetValue)); OnPropertyChanged(nameof(EditableValue));
         OnPropertyChanged(nameof(IsCellEditing)); OnPropertyChanged(nameof(CanEditValue));
     }
-    public Thickness Indent => new(Math.Min(Node.Depth, 12) * 12, 0, 0, 0);
+    public Thickness Indent => new(Node.Depth * 14, 0, 0, 0);
     public string ToggleText => Node.Children.Count == 0 ? "·" : Node.IsExpanded ? "▼" : "▶";
     public string LeftPath => Node.Left?.Path is { Length: > 0 } p ? p : Node.Left == null ? "—" : Owner.Session!.Left.Schema.StructName;
     public string RightPath => Node.Right?.Path is { Length: > 0 } p ? p : Node.Right == null ? "—" : Owner.Session!.Right.Schema.StructName;
@@ -36,7 +39,7 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
     public string TargetSize => Size(Node.Target);
     public bool HasLeft => Owner.Session?.CanSelectSource(Node, true) == true;
     public bool HasRight => Owner.Session?.CanSelectSource(Node, false) == true;
-    public bool ShowChoices => (Node.HasDifference || Node.HasUnresolved) && (HasLeft || HasRight);
+    public bool ShowChoices => (Owner.StructureComparison ? Node.HasStructureDifference : Node.HasDifference || Node.HasUnresolved) && (HasLeft || HasRight);
     public bool? LeftChecked => Owner.Session == null ? false : Owner.Session.SourceSelection(Node, true);
     public bool? RightChecked => Owner.Session == null ? false : Owner.Session.SourceSelection(Node, false);
     public string LeftSelectionHint => SelectionHint("버전1");
@@ -51,9 +54,9 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
     private string Display(byte[] data, BinaryField? field) => field == null ? "—" : field.IsContainer
         ? $"하위 {field.Children().Count():N0}개"
         : BinaryValueCodec.Format(data, field, Owner.EncodingName, Owner.ShowHex);
-    public string LeftValue => Display(Owner.Session!.Left.Data, Node.Left);
-    public string RightValue => Display(Owner.Session!.Right.Data, Node.Right);
-    public string TargetValue => Node.Target == null ? "미포함" :
+    public string LeftValue => HideCommonValue ? string.Empty : Display(Owner.Session!.Left.Data, Node.Left);
+    public string RightValue => HideCommonValue ? string.Empty : Display(Owner.Session!.Right.Data, Node.Right);
+    public string TargetValue => HideCommonValue ? string.Empty : Node.Target == null ? "미포함" :
         Node.HasUnassignedValue && Node.IsResultLeaf ? string.Empty :
         (!Owner.Session!.IsActive(Node) ? "(비활성 union 보기) " : "") + Display(Owner.Session!.Result, Node.Target);
     private ValueResolution Origin => Node.AppliedResolution;
@@ -65,7 +68,8 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
             ValueResolution.Version2 => "✓ 버전2 적용 완료", ValueResolution.Manual => "직접 입력", ValueResolution.Zero => "직접 입력 · 0 적용",
             ValueResolution.Mixed => "혼합 적용", _ => "포함"
         }) + (Node.HasUnassignedValue ? " · 값 미선택 있음" : Node.HasUnresolved ? " · 일부 적용" : "");
-    public string State => Node.Difference + " · " + ResultState;
+    public string DifferenceText => Owner.StructureComparison ? Node.HasStructureDifference ? "구조 차이" : "공통 구조 · Base 값 사용" : Node.Difference;
+    public string State => DifferenceText + " · " + ResultState;
     public bool SizeDiffers => Node.DifferenceKinds.HasFlag(DatDifferenceKind.Size);
     public bool ValueDiffers => (Node.DifferenceKinds & (DatDifferenceKind.Value | DatDifferenceKind.RawBytes)) != 0;
     public string SizeColor => SizeDiffers ? "#6FE8F5" : "#B9C4D1";

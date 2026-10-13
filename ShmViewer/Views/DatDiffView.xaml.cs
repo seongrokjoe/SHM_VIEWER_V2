@@ -78,6 +78,9 @@ public partial class DatDiffView : UserControl
     };
     private void BindViewerColumns()
     {
+        foreach (var column in ComparisonGrid.Columns)
+            BindingOperations.SetBinding(column, DataGridColumn.MinWidthProperty,
+                new Binding(nameof(DatDiffViewModel.ComparisonColumnMinWidth)) { Source = _viewModel });
         for (var i = 0; i < ViewerGrid.Columns.Count; i++)
             BindingOperations.SetBinding(ViewerGrid.Columns[i], DataGridColumn.VisibilityProperty,
                 new Binding(ColumnProperties[i]) { Source = _viewModel, Converter = BoolToVisConverter.Instance });

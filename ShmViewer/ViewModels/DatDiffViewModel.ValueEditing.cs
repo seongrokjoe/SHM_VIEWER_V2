@@ -16,6 +16,7 @@ public partial class DatDiffViewModel
 {
     public DatEditSession? ViewerSession { get; private set; }
     public object? CellEditTarget { get; private set; }
+    private DatSourceVersion? _cellEditFormat;
     public bool HasCellEdit => CellEditTarget != null;
     public bool CanEditValues => CanInteract && (Session != null || ViewerSession != null);
     public bool CanUndo => CanEditValues && (LoadOnly ? ViewerSession?.CanUndo == true : Session?.CanUndo == true);
@@ -35,11 +36,14 @@ public partial class DatDiffViewModel
         if (Equals(CellEditTarget, row.EditTarget)) return true;
         if (HasCellEdit && !CommitCellEdit()) return false;
         if (HasPendingEdit && !_confirm("적용하지 않은 입력을 버리고 셀을 편집하시겠습니까?")) return false;
+        DatSourceVersion? format = null;
+        if (row.EditTarget is DatMergeNode editNode && !TryChooseValueFormat(editNode, out format)) return false;
         LoadEditor();
+        _cellEditFormat = format;
         CellEditTarget = row.EditTarget;
         var field = row.EditTarget is DatMergeNode node ? node.Target! : (BinaryField)row.EditTarget;
         var data = LoadOnly ? ViewerSession!.Data : Session!.Result;
-        CellEditorText = row.EditTarget is DatMergeNode { HasUnassignedValue: true }
+        CellEditorText = row.EditTarget is DatMergeNode n && (n.Target == null || n.HasUnassignedValue)
             ? string.Empty : BinaryValueCodec.FormatForEdit(data, field, EncodingName, ShowHex);
         CellEditorError = string.Empty;
         RefreshCellEditors();
@@ -52,7 +56,7 @@ public partial class DatDiffViewModel
         if (!CanEditValues) return false;
         try
         {
-            if (CellEditTarget is DatMergeNode node) Session!.SetValue(node, CellEditorText, EncodingName);
+            if (CellEditTarget is DatMergeNode node) Session!.SetValue(node, CellEditorText, EncodingName, _cellEditFormat);
             else ViewerSession!.SetValue((BinaryField)CellEditTarget!, CellEditorText, EncodingName);
             ClearCellEdit();
             RebuildRows(); RebuildViewerRows(); LoadEditor(); UpdateSummary(); NotifyState();
@@ -75,7 +79,7 @@ public partial class DatDiffViewModel
 
     private void ClearCellEdit()
     {
-        CellEditTarget = null; CellEditorText = CellEditorError = string.Empty;
+        CellEditTarget = null; _cellEditFormat = null; CellEditorText = CellEditorError = string.Empty;
     }
 
     private void RefreshCellEditors()
