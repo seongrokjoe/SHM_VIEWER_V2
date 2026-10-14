@@ -1,0 +1,38 @@
+﻿SCTC_CONFIG.exe 사용 방법 v2
+========================================
+
+[핵심 기능]
+SCTC 설정 폴더의 CSV/XML을 불러와 설정을 편집하고 저장합니다.
+Main/SCD: 독립 실행, 가상 드라이버, 시뮬레이션 등 표시된 설정 변경
+UI: CTC_UI.xml의 EnableUIDebugMode 변경
+Driver: NeedLoad와 Arg1~Arg5 변경
+Function: 파일별 시뮬레이션 상태를 대상 항목 전체에 적용
+Alarm: 선택 파일의 StopMode를 DisplayOnly:1로 적용
+
+[실행 준비]
+기본 배포 exe 실행에는 .NET 8 Windows Desktop Runtime(x64)이 필요합니다.
+Path에는 설정 루트 폴더를 지정합니다.
+CSV 필수 파일: General.csv, SCD 폴더의 SCDGeneral.csv
+XML 필수 파일: SCTC.xml, SCD.xml
+Driver/Function/Alarm 폴더와 CTC_UI.xml은 설정 루트 아래에 둡니다.
+
+[기본 사용 순서]
+1. Browse 또는 Path 입력으로 설정 루트 폴더를 지정합니다.
+2. CSV/XML 탭을 선택하고 Load를 누릅니다.
+3. 필요한 토글, 입력값, 체크박스를 변경합니다.
+4. Save를 누르고 저장 설정 창에서 저장합니다.
+5. 저장 후 계속 편집하려면 같은 탭에서 다시 Load합니다.
+Save는 현재 탭의 설정을 원본 파일에 저장합니다.
+백업하려면 기본 선택된 '백업하지 않음'을 해제하고 새 폴더명을 지정합니다.
+백업은 설정 루트의 상위 폴더에 원본 설정 폴더 전체를 복사합니다.
+
+[Alarm 적용]
+상단 Run/Setup/Default에서 적용할 모드를 선택합니다.
+대상 파일의 DisplayOnly를 체크하고 Save하면 해당 파일의 대상 알람 전체에 적용됩니다.
+DisplayOnly 체크 해제는 이미 저장한 값을 원래 StopMode로 복원하지 않습니다.
+
+[CSV Alarm Export]
+CSV 탭 Alarm의 Export는 Run과 Default가 다른 행을 CSV 보고서로 만듭니다.
+보고서는 로드한 Alarm 폴더에 날짜_시각.csv로 저장됩니다.
+Export는 Load 당시 내용을 사용하므로 최신 저장값은 다시 Load한 뒤 내보냅니다.
+보고서는 다음 Load 전에 Alarm 폴더 밖으로 옮깁니다.
