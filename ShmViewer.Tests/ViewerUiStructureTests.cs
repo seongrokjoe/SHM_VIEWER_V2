@@ -28,7 +28,7 @@ public sealed partial class ViewerUiTests
         try
         {
             window.Show(); ((TabControl)window.FindName("WorkspaceTabs")).SelectedIndex = 1;
-            await diff.DiffCommand.ExecuteAsync(null); diff.DifferencesOnly = true;
+            await diff.DiffCommand.ExecuteAsync(null); await diff.SetComparisonModeAsync(DatComparisonMode.AllDifferences);
             var view = Find<DatDiffView>(window)!; var grid = (DataGrid)view.FindName("ComparisonGrid");
             var leaf = diff.Rows.Single(r => r.Node.Path == path);
             Assert.True(leaf.Node.Depth > 12); Assert.Equal(leaf.Node.Depth * 14, leaf.Indent.Left);
@@ -38,9 +38,9 @@ public sealed partial class ViewerUiTests
             var container = (DataGridRow)grid.ItemContainerGenerator.ContainerFromItem(leaf);
             Assert.All(AllVisuals<DatTreeBranch>(container), branch => Assert.Equal(leaf.Node.Depth * 14 + 22, branch.ActualWidth));
             Render(window, "dat-deep-tree.png");
-            diff.DifferencesOnly = false;
+            await diff.SetComparisonModeAsync(DatComparisonMode.All);
             Assert.DoesNotContain(diff.Rows, r => r.Node.Path == path);
-            diff.DifferencesOnly = true; Assert.Contains(diff.Rows, r => r.Node.Path == path);
+            await diff.SetComparisonModeAsync(DatComparisonMode.AllDifferences); Assert.Contains(diff.Rows, r => r.Node.Path == path);
         }
         finally { window.Close(); }
     });

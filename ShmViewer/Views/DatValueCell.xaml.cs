@@ -8,6 +8,9 @@ namespace ShmViewer.Views;
 
 public partial class DatValueCell : UserControl
 {
+    public static readonly DependencyProperty ValueTextAlignmentProperty = DependencyProperty.Register(nameof(ValueTextAlignment),
+        typeof(TextAlignment), typeof(DatValueCell), new PropertyMetadata(TextAlignment.Left));
+    public TextAlignment ValueTextAlignment { get => (TextAlignment)GetValue(ValueTextAlignmentProperty); set => SetValue(ValueTextAlignmentProperty, value); }
     public DatValueCell() => InitializeComponent();
 
     private void Value_DoubleClick(object sender, MouseButtonEventArgs e)

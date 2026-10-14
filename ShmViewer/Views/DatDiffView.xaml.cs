@@ -16,13 +16,44 @@ public partial class DatDiffView : UserControl
         InitializeComponent();
         DataContextChanged += (_, _) =>
         {
-            if (_viewModel != null) { _viewModel.ScrollRequested -= ScrollTo; _viewModel.ViewResetRequested -= ResetView; }
+            if (_viewModel != null)
+            {
+                _viewModel.ScrollRequested -= ScrollTo; _viewModel.ViewResetRequested -= ResetView;
+                _viewModel.RowsUpdating -= CaptureGridState; _viewModel.RowsUpdated -= RestoreGridState;
+            }
             _viewModel = DataContext as DatDiffViewModel;
-            if (_viewModel != null) { _viewModel.ScrollRequested += ScrollTo; _viewModel.ViewResetRequested += ResetView; }
+            if (_viewModel != null)
+            {
+                _viewModel.ScrollRequested += ScrollTo; _viewModel.ViewResetRequested += ResetView;
+                _viewModel.RowsUpdating += CaptureGridState; _viewModel.RowsUpdated += RestoreGridState;
+            }
             BindViewerColumns();
         };
     }
     private void ScrollTo(DatRowViewModel row) => ComparisonGrid.ScrollIntoView(row);
+    private string? _scrollAnchor;
+    private double _verticalOffset, _horizontalOffset;
+    private void CaptureGridState()
+    {
+        var scroll = FindVisual<ScrollViewer>(ComparisonGrid);
+        _verticalOffset = scroll?.VerticalOffset ?? 0;
+        _horizontalOffset = scroll?.HorizontalOffset ?? 0;
+        _scrollAnchor = _viewModel?.Rows.ElementAtOrDefault((int)_verticalOffset)?.Node.Path;
+    }
+    private void RestoreGridState()
+    {
+        if (_viewModel == null) return;
+        var selected = _viewModel.SelectedNodes.Select(n => n.Path).ToHashSet(StringComparer.Ordinal);
+        foreach (var row in ComparisonGrid.SelectedItems.OfType<DatRowViewModel>().ToArray())
+            if (!selected.Contains(row.Node.Path) && row != _viewModel.SelectedRow) ComparisonGrid.SelectedItems.Remove(row);
+        foreach (var row in _viewModel.Rows.Where(r => selected.Contains(r.Node.Path)))
+            if (!ComparisonGrid.SelectedItems.Contains(row)) ComparisonGrid.SelectedItems.Add(row);
+        ComparisonGrid.UpdateLayout();
+        var scroll = FindVisual<ScrollViewer>(ComparisonGrid);
+        var anchor = _viewModel.Rows.FirstOrDefault(r => r.Node.Path == _scrollAnchor);
+        scroll?.ScrollToVerticalOffset(anchor == null ? _verticalOffset : _viewModel.Rows.IndexOf(anchor));
+        scroll?.ScrollToHorizontalOffset(_horizontalOffset);
+    }
     private void ResetView()
     {
         InputScroller.ScrollToTop(); ComparisonGrid.UnselectAll(); ViewerGrid.UnselectAll();
@@ -127,7 +158,7 @@ public partial class DatDiffView : UserControl
     }
     private void ComparisonGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_viewModel == null) return;
+        if (_viewModel == null || _viewModel.IsRefreshingRows) return;
         _viewModel.SelectedNodes.Clear();
         _viewModel.SelectedNodes.AddRange(ComparisonGrid.SelectedItems.OfType<DatRowViewModel>().Select(r => r.Node));
         _viewModel.SelectionChanged();

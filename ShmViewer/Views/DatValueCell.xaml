@@ -4,12 +4,14 @@
  xmlns:local="clr-namespace:ShmViewer"
  Focusable="True" MouseDoubleClick="Value_DoubleClick" PreviewKeyDown="Value_KeyDown">
  <Grid MinHeight="20" Background="Transparent">
-  <TextBlock Text="{Binding EditableValue}" FontWeight="Bold" TextTrimming="CharacterEllipsis" ToolTip="{Binding EditableValue}">
+  <TextBlock Text="{Binding EditableValue}" FontWeight="Bold" TextTrimming="CharacterEllipsis" ToolTip="{Binding EditableValue}"
+   TextAlignment="{Binding ValueTextAlignment, RelativeSource={RelativeSource AncestorType=UserControl}}" FlowDirection="LeftToRight">
    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Visible"/>
     <Style.Triggers><DataTrigger Binding="{Binding IsCellEditing}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
    </Style></TextBlock.Style>
   </TextBlock>
   <TextBox x:Name="ValueEditor" Text="{Binding Owner.CellEditorText, UpdateSourceTrigger=PropertyChanged}" FontWeight="Bold"
+   TextAlignment="{Binding ValueTextAlignment, RelativeSource={RelativeSource AncestorType=UserControl}}" FlowDirection="LeftToRight"
    Visibility="{Binding IsCellEditing, Converter={x:Static local:BoolToVisConverter.Instance}}"
    IsVisibleChanged="Editor_IsVisibleChanged" LostKeyboardFocus="Editor_LostKeyboardFocus" ToolTip="Enter: 적용 · Esc: 취소"/>
  </Grid>

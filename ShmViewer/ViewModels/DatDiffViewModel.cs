@@ -84,9 +84,10 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     public List<DatDiffNode> SelectedNodes { get; } = new();
     public event Action<DatRowViewModel>? ScrollRequested;
     public event Action? ViewResetRequested;
+    public event Action? RowsUpdating;
+    public event Action? RowsUpdated;
     [ObservableProperty] private ObservableCollection<DatRowViewModel> _rows = new();
     [ObservableProperty] private bool _isBusy;
-    [ObservableProperty] private bool _differencesOnly;
     [ObservableProperty] private string _encodingName = "ASCII";
     [ObservableProperty] private bool _showHex;
     [ObservableProperty] private string _status = InitialStatus;
@@ -116,6 +117,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     }
     public string[] Encodings { get; } = { "ASCII", "CP949", "UTF-8" };
     public bool HasTargetSelection => CanEdit && SelectedRow?.Node.Field(ActiveVersion) != null;
+    public bool CanApplySelection => CanEdit && Selection().Any(n => n.Left != null || n.Right != null);
     public bool CanRemoveSelection => HasTargetSelection && Selection().Any() && Selection().All(n => Session!.CanRemove(ActiveVersion, n.Path));
     private string Summary(DatSourceVersion version)
     {
@@ -162,7 +164,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         {
             HasPendingEdit = false; EditorError = string.Empty; _selectedRow = null;
             Session = null; ViewerDocument = null; ViewerSession = null; _viewerRoot = null;
-            ClearCellEdit(); _unfilteredExpansion.Clear(); _filterMatches.Clear();
+            ClearCellEdit(); ClearComparisonRows();
             Rows.Clear(); ViewerRows.Clear(); SelectedNodes.Clear(); LoadEditor();
         }
         finally { _rebuildingRows = false; }
@@ -175,27 +177,15 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         if ((HasResults || Left.HasInput || Right.HasInput) && !_confirm("DAT 화면의 입력 설정, 로드된 정보와 편집 결과를 모두 초기화하시겠습니까?")) return;
         ClearResults(); Left.Reset(); Right.Reset();
         _dataKind = SctcDataKind.Run; _loadOnly = false; _viewerUsesLeft = true; _activeVersion = DatSourceVersion.Version1;
-        _structureComparison = false; AdvancedEditingExpanded = false;
+        _comparisonMode = DatComparisonMode.All; AdvancedEditingExpanded = false;
         NotifyComparisonMode();
-        DifferencesOnly = false; EncodingName = "ASCII"; ShowHex = false; Status = InitialStatus;
+        EncodingName = "ASCII"; ShowHex = false; Status = InitialStatus;
         ShowViewerPath = ShowViewerType = ShowViewerSize = ShowViewerValue = true; ShowViewerOffset = false;
         OnPropertyChanged(nameof(DataKind)); OnPropertyChanged(nameof(IsRunData)); OnPropertyChanged(nameof(IsInitData));
         OnPropertyChanged(nameof(LoadOnly)); OnPropertyChanged(nameof(ViewerUsesLeft)); OnPropertyChanged(nameof(ViewerUsesRight));
         NotifyActiveVersion(); NotifyState(); ViewResetRequested?.Invoke();
     }
     partial void OnIsBusyChanged(bool value) => NotifyState();
-    private readonly Dictionary<string, bool> _unfilteredExpansion = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _filterMatches = new(StringComparer.Ordinal);
-    partial void OnDifferencesOnlyChanged(bool value)
-    {
-        if (!value)
-        {
-            if (Session != null) foreach (var node in Session.Nodes)
-                if (_unfilteredExpansion.TryGetValue(node.Path, out var expanded)) node.IsExpanded = expanded;
-            _unfilteredExpansion.Clear(); _filterMatches.Clear();
-        }
-        RebuildRows();
-    }
     partial void OnEncodingNameChanged(string value) { RebuildRows(); RebuildViewerRows(); if (!HasPendingEdit && !HasCellEdit) LoadEditor(); }
     partial void OnShowHexChanged(bool value) { RebuildRows(); RebuildViewerRows(); if (!HasPendingEdit && !HasCellEdit) LoadEditor(); }
     partial void OnEditorTextChanged(string value)
@@ -265,23 +255,28 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     private void NavigateDifference(int direction)
     {
         if (!CanEdit || Session == null) return;
-        var candidates = Session.Nodes.Where(n => MatchesDifference(n) && (n.Children.Count == 0 || n.Children.All(c => !MatchesDifference(c)))).ToList();
-        if (candidates.Count == 0) return;
-        var current = candidates.FindIndex(n => n.Path == SelectedRow?.Node.Path);
-        var index = current < 0 ? (direction > 0 ? 0 : candidates.Count - 1) : (current + direction + candidates.Count) % candidates.Count;
-        var node = candidates[index];
+        var ordered = _displayNodes.Values.ToList();
+        var candidates = ordered.Select((node, index) => (Node: node, Index: index))
+            .Where(item => MatchesDifference(item.Node) && item.Node.Children.All(c => !MatchesDifference(c))).ToArray();
+        if (candidates.Length == 0) return;
+        var current = ordered.FindIndex(n => n.Path == SelectedRow?.Node.Path);
+        var node = direction > 0
+            ? candidates.FirstOrDefault(item => item.Index > current).Node ?? candidates[0].Node
+            : candidates.LastOrDefault(item => item.Index < current).Node ?? candidates[^1].Node;
         for (var parent = node.Parent; parent != null; parent = parent.Parent) parent.IsExpanded = true;
         RebuildRows(); SelectedRow = Rows.FirstOrDefault(r => r.Node.Path == node.Path);
         if (SelectedRow != null) ScrollRequested?.Invoke(SelectedRow);
     }
     private IEnumerable<DatDiffNode> Selection() => SelectedNodes.Count > 0 ? SelectedNodes : SelectedRow == null ? Array.Empty<DatDiffNode>() : new[] { SelectedRow.Node };
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void UseLeft() => ApplySource(DatSourceVersion.Version1);
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void UseRight() => ApplySource(DatSourceVersion.Version2);
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void ApplyLeftRow(DatRowViewModel row) => ApplySource(DatSourceVersion.Version1, row);
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void ApplyRightRow(DatRowViewModel row) => ApplySource(DatSourceVersion.Version2, row);
+    [RelayCommand(CanExecute = nameof(CanApplySelection))] private void UseLeft() => ApplySource(DatSourceVersion.Version1);
+    [RelayCommand(CanExecute = nameof(CanApplySelection))] private void UseRight() => ApplySource(DatSourceVersion.Version2);
+    private bool CanApplyRow(DatRowViewModel? row) => CanEdit && row is { IsAbsent: false };
+    [RelayCommand(CanExecute = nameof(CanApplyRow))] private void ApplyLeftRow(DatRowViewModel row) => ApplySource(DatSourceVersion.Version1, row);
+    [RelayCommand(CanExecute = nameof(CanApplyRow))] private void ApplyRightRow(DatRowViewModel row) => ApplySource(DatSourceVersion.Version2, row);
     private void ApplySource(DatSourceVersion source, DatRowViewModel? row = null) => Edit(() =>
     {
-        var paths = row == null ? Selection().Select(n => n.Path).ToArray() : new[] { row.Node.Path };
+        var paths = (row == null ? Selection() : new[] { row.Node })
+            .Where(n => n.Left != null || n.Right != null).Select(n => n.Path).ToArray();
         if (paths.Length == 0) return;
         var plan = Session!.PreviewApply(paths, source);
         if (plan.ExpandedScopes.Count > 0 && !_confirm("개별 적용으로는 배열·union 등의 구조를 유지할 수 없습니다.\n다음 그룹의 구조와 모든 값을 소스와 일치시킵니다:\n" +
@@ -339,46 +334,9 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         finally { _settingEditor = false; }
         NotifyState();
     }
-    private void RebuildRows()
-    {
-        if (DifferencesOnly && Session != null)
-        {
-            foreach (var node in Session.Nodes) _unfilteredExpansion.TryAdd(node.Path, node.IsExpanded);
-            var matches = Session.Nodes.Where(MatchesDifference).ToArray();
-            foreach (var node in matches.Where(n => !_filterMatches.Contains(n.Path)))
-                for (var parent = node.Parent; parent != null; parent = parent.Parent) parent.IsExpanded = true;
-            _filterMatches.Clear(); _filterMatches.UnionWith(matches.Select(n => n.Path));
-        }
-        var selectedPath = _selectedRow?.Node.Path;
-        var editingPath = CellEditTarget is DatCellTarget target ? target.Path : HasPendingEdit ? selectedPath : null;
-        bool Visible(DatDiffNode n) => !DifferencesOnly || MatchesDifference(n) || editingPath != null && DatDiffSession.IsWithin(editingPath, n.Path);
-        var rows = new List<DatRowViewModel>();
-        void Add(DatDiffNode node)
-        {
-            if (!Visible(node)) return;
-            rows.Add(new(this, node));
-            if (editingPath != null && DatDiffSession.IsWithin(editingPath, node.Path) && editingPath != node.Path) node.IsExpanded = true;
-            if (node.IsExpanded) foreach (var child in node.Children) Add(child);
-        }
-        if (Session != null) Add(Session.Root);
-        foreach (var row in rows)
-        {
-            row.HasVisibleChildren = row.Node.Children.Any(Visible); var branches = new List<bool>();
-            for (var n = row.Node; n.Parent != null; n = n.Parent) branches.Add(n.Parent.Children.Where(Visible).LastOrDefault() != n);
-            branches.Reverse(); row.TreeBranches = branches.ToArray();
-        }
-        _rebuildingRows = true;
-        try
-        {
-            Rows = new(rows); SelectedNodes.Clear(); _selectedRow = Rows.FirstOrDefault(r => r.Node.Path == selectedPath);
-            OnPropertyChanged(nameof(SelectedRow));
-        }
-        finally { _rebuildingRows = false; }
-        NotifyState();
-    }
     private void UpdateSummary()
     {
-        Status = Session == null ? ViewerSummary : $"{LeftSummary} | {RightSummary} | 차이 {Session.Root.DifferenceCount:N0}개";
+        Status = Session == null ? ViewerSummary : $"{LeftSummary} | {RightSummary} | {(StructureComparison ? "구조 차이" : "차이")} {RemainingDifferenceCount:N0}개";
         NotifyState();
     }
     internal void SelectionChanged() => NotifyState();
@@ -387,10 +345,12 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         foreach (var name in new[] { nameof(CanSave), nameof(CanSaveLeft), nameof(CanSaveRight), nameof(HasTargetSelection), nameof(CanRemoveSelection),
             nameof(CanDiff), nameof(CanInteract), nameof(CanEdit), nameof(IsDiffMode), nameof(HasCellEdit), nameof(CanEditValues),
             nameof(CanUndo), nameof(CanRedo), nameof(SaveLabel), nameof(ExecuteLabel), nameof(ViewerSummary), nameof(ViewerLeftOption),
-            nameof(LeftSummary), nameof(RightSummary), nameof(ComparisonColumnMinWidth) }) OnPropertyChanged(name);
+            nameof(LeftSummary), nameof(RightSummary), nameof(ComparisonColumnMinWidth), nameof(CanChangeComparisonMode),
+            nameof(CanApplySelection), nameof(RemainingDifferenceCount) }) OnPropertyChanged(name);
         foreach (var command in new IRelayCommand[] { DiffCommand, SaveCommand, SaveLeftCommand, SaveRightCommand, ResetCommand, ToggleCommand,
             NextDifferenceCommand, PreviousDifferenceCommand, UseLeftCommand, UseRightCommand, ApplyLeftRowCommand, ApplyRightRowCommand,
-            RemoveCommand, SetZeroCommand, ApplyValueCommand, CancelEditCommand, UndoCommand, RedoCommand }) command.NotifyCanExecuteChanged();
+            RemoveCommand, SetZeroCommand, ApplyValueCommand, CancelEditCommand, UndoCommand, RedoCommand,
+            ChangeComparisonModeCommand }) command.NotifyCanExecuteChanged();
     }
     public void Dispose()
     {

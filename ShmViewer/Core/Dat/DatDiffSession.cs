@@ -240,6 +240,16 @@ public sealed class DatDiffSession
     }
     public DatSaveResult Save(DatSourceVersion version, DatFileStore? store = null) => Version(version).Save(store ?? new());
 
+    public void ResetToSaved()
+    {
+        Left.Current = Left.Saved;
+        Right.Current = Right.Saved;
+        _undo.Clear();
+        _redo.Clear();
+        _revision++;
+        Rebuild();
+    }
+
     private void Rebuild(CancellationToken token = default)
     {
         var expanded = _nodes.Where(n => n.IsExpanded).Select(n => n.Path).ToHashSet(StringComparer.Ordinal);

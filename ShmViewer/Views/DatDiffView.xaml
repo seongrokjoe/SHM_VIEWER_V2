@@ -2,6 +2,7 @@
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:views="clr-namespace:ShmViewer.Views"
+ xmlns:vm="clr-namespace:ShmViewer.ViewModels"
  xmlns:local="clr-namespace:ShmViewer">
  <Grid Background="#1E2023">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
@@ -40,8 +41,12 @@
    <Button x:Name="ResetButton" Content="전체 초기화" Command="{Binding ResetCommand}" Margin="0,0,10,0" Focusable="False"/>
    <Button Content="취소" Command="{Binding CancelCommand}" Margin="0,0,12,0" Visibility="{Binding IsBusy, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
    <StackPanel Orientation="Horizontal" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
-   <CheckBox x:Name="StructureComparisonOption" Content="구조 비교" IsChecked="{Binding StructureComparison}" IsEnabled="{Binding CanInteract}" Foreground="#9CDCFE" VerticalAlignment="Center" Margin="0,0,8,0"/>
-   <CheckBox Content="{Binding DifferenceFilterLabel}" IsChecked="{Binding DifferencesOnly}" Foreground="#DDD" VerticalAlignment="Center" Margin="0,0,10,0"/>
+   <CheckBox x:Name="StructureComparisonOption" Content="구조 비교" IsChecked="{Binding StructureComparison, Mode=OneWay}" IsEnabled="{Binding CanChangeComparisonMode}"
+    Command="{Binding ChangeComparisonModeCommand}" CommandParameter="{x:Static vm:DatComparisonMode.StructureDifferences}"
+    Focusable="False" Foreground="#9CDCFE" VerticalAlignment="Center" Margin="0,0,8,0"/>
+   <CheckBox x:Name="DifferencesOnlyOption" Content="차이점만 보기" IsChecked="{Binding DifferencesOnly, Mode=OneWay}" IsEnabled="{Binding CanChangeComparisonMode}"
+    Command="{Binding ChangeComparisonModeCommand}" CommandParameter="{x:Static vm:DatComparisonMode.AllDifferences}"
+    Focusable="False" Foreground="#DDD" VerticalAlignment="Center" Margin="0,0,10,0"/>
    <Button Content="◀ 이전 차이" Command="{Binding PreviousDifferenceCommand}" Margin="0,0,4,0"/>
    <Button Content="다음 차이 ▶" Command="{Binding NextDifferenceCommand}" Margin="0,0,12,0"/>
    </StackPanel>
@@ -83,13 +88,12 @@
    <DataGrid.Columns>
     <DataGridTemplateColumn Header="버전1 · 값 더블클릭 / F2" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
      <Border Background="{Binding LeftBackground}" BorderBrush="#8A9BAE" BorderThickness="0,0,2,0" Padding="6,0" MinHeight="86">
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
-
-       <views:DatTreeBranch/>
-       <StackPanel Grid.Column="1" Margin="0,6"><TextBlock Text="{Binding LeftPath}" ToolTip="{Binding LeftPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
-        <TextBlock Text="{Binding LeftType}" Foreground="{Binding TypeColor}" FontSize="11" TextTrimming="CharacterEllipsis"/>
-        <WrapPanel><TextBlock Text="{Binding LeftDetail}" Foreground="#AAB6C5" FontSize="11" Margin="0,0,8,0"/><TextBlock Text="{Binding LeftSize}" Foreground="{Binding SizeColor}" FontWeight="SemiBold" FontSize="11"/></WrapPanel>
-        <views:DatValueCell DataContext="{Binding LeftCell}" Foreground="{Binding ValueColor}"/>
+      <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <views:DatTreeBranch Grid.Column="1" IsMirrored="True"/>
+       <StackPanel Margin="0,6"><TextBlock Text="{Binding LeftPath}" ToolTip="{Binding LeftPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0" TextAlignment="Right"/>
+        <TextBlock Text="{Binding LeftType}" Foreground="{Binding TypeColor}" FontSize="11" TextTrimming="CharacterEllipsis" TextAlignment="Right"/>
+        <WrapPanel HorizontalAlignment="Right"><TextBlock Text="{Binding LeftSize}" Foreground="{Binding SizeColor}" FontWeight="SemiBold" FontSize="11"/><TextBlock Text="{Binding LeftDetail}" Foreground="#AAB6C5" FontSize="11" Margin="8,0,0,0"/></WrapPanel>
+        <views:DatValueCell DataContext="{Binding LeftCell}" Foreground="{Binding ValueColor}" ValueTextAlignment="Right"/>
        </StackPanel>
       </Grid>
      </Border>

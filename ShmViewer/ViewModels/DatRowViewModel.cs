@@ -7,7 +7,7 @@ namespace ShmViewer.ViewModels;
 public sealed class DatRowViewModel : ObservableObject, IDatValueRow
 {
     public DatDiffViewModel Owner { get; }
-    public DatDiffNode Node { get; }
+    public DatDiffNode Node { get; private set; }
     public DatSideCell LeftCell { get; }
     public DatSideCell RightCell { get; }
     public DatRowViewModel(DatDiffViewModel owner, DatDiffNode node)
@@ -18,11 +18,21 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
     public string EditableValue => ActiveCell.EditableValue;
     public bool[] TreeBranches { get; internal set; } = Array.Empty<bool>();
     public bool HasVisibleChildren { get; internal set; }
+    public bool IsAbsent => Node.Left == null && Node.Right == null;
+    internal void Update(DatDiffNode node, bool[] branches, bool hasVisibleChildren)
+    {
+        Node = node;
+        TreeBranches = branches;
+        HasVisibleChildren = hasVisibleChildren;
+        OnPropertyChanged(string.Empty);
+        LeftCell.Refresh();
+        RightCell.Refresh();
+    }
     internal void RefreshValue() { LeftCell.Refresh(); RightCell.Refresh(); OnPropertyChanged(nameof(CanEditValue)); }
     public Thickness Indent => new(Node.Depth * 14, 0, 0, 0);
     public string ToggleText => Node.Children.Count == 0 ? "·" : Node.IsExpanded ? "▼" : "▶";
-    public string LeftPath => Node.Left?.Path is { Length: > 0 } p ? p : Node.Left == null ? "—" : Owner.Session!.Left.Current.Schema.StructName;
-    public string RightPath => Node.Right?.Path is { Length: > 0 } p ? p : Node.Right == null ? "—" : Owner.Session!.Right.Current.Schema.StructName;
+    public string LeftPath => IsAbsent ? Node.Path : Node.Left?.Path is { Length: > 0 } p ? p : Node.Left == null ? "—" : Owner.Session!.Left.Current.Schema.StructName;
+    public string RightPath => IsAbsent ? Node.Path : Node.Right?.Path is { Length: > 0 } p ? p : Node.Right == null ? "—" : Owner.Session!.Right.Current.Schema.StructName;
     private static string Detail(BinaryField? field) => field == null ? "" : $"+{field.Offset:N0}" + (field.BitWidth > 0 ? $" · bit {field.BitOffset}:{field.BitWidth}" : "");
     private static string Size(BinaryField? field) => field == null ? "—" : $"{field.ByteLength:N0} B";
     public string LeftType => Node.Left?.Type.Name ?? "—";
@@ -35,14 +45,14 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
     public string RightValue => RightCell.EditableValue;
     public string ApplyLeftHint => Node.Left == null ? "버전2에서 이 항목 삭제" : Node.Right == null ? "버전1 → 버전2: 항목 추가" : "버전1 → 버전2: 구조·값 적용";
     public string ApplyRightHint => Node.Right == null ? "버전1에서 이 항목 삭제" : Node.Left == null ? "버전2 → 버전1: 항목 추가" : "버전2 → 버전1: 구조·값 적용";
-    public string DifferenceText => Owner.StructureComparison ? Node.HasStructureDifference ? "구조 차이" : "동일 구조" : Node.Difference;
+    public string DifferenceText => IsAbsent ? "현재 구조에 없음" : Owner.StructureComparison ? Node.HasStructureDifference ? "구조 차이" : "동일 구조" : Node.Difference;
     public bool SizeDiffers => Node.DifferenceKinds.HasFlag(DatDifferenceKind.Size);
-    public bool ValueDiffers => (Node.DifferenceKinds & (DatDifferenceKind.Value | DatDifferenceKind.RawBytes)) != 0;
+    public bool ValueDiffers => !Owner.StructureComparison && (Node.DifferenceKinds & (DatDifferenceKind.Value | DatDifferenceKind.RawBytes)) != 0;
     public string SizeColor => SizeDiffers ? "#6FE8F5" : "#B9C4D1";
     public string TypeColor => Node.DifferenceKinds.HasFlag(DatDifferenceKind.Type) ? "#DFB8FF" : "#B9C4D1";
-    public string LeftBackground => Node.Left == null ? "#342923" : Node.HasDifference ? "#293B4F" : "#263C35";
-    public string RightBackground => Node.Right == null ? "#342923" : Node.HasDifference ? "#2C423B" : "#263C35";
-    public string StateColor => Node.HasDifference ? "#E4B977" : "#98C5AC";
+    public string LeftBackground => IsAbsent ? "#292D32" : Node.Left == null ? "#342923" : Owner.MatchesDifference(Node) ? "#293B4F" : "#263C35";
+    public string RightBackground => IsAbsent ? "#292D32" : Node.Right == null ? "#342923" : Owner.MatchesDifference(Node) ? "#2C423B" : "#263C35";
+    public string StateColor => IsAbsent ? "#9DA6AF" : Owner.MatchesDifference(Node) ? "#E4B977" : "#98C5AC";
 }
 
 public sealed class DatSideCell : ObservableObject, IDatValueRow
@@ -62,5 +72,6 @@ public sealed class DatSideCell : ObservableObject, IDatValueRow
     internal void Refresh()
     {
         OnPropertyChanged(nameof(EditableValue)); OnPropertyChanged(nameof(IsCellEditing)); OnPropertyChanged(nameof(CanEditValue));
+        OnPropertyChanged(nameof(ValueColor));
     }
 }

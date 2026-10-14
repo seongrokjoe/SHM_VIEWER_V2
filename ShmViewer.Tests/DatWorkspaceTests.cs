@@ -55,17 +55,20 @@ public sealed class DatWorkspaceTests
     {
         using var setup = new Inputs(); var vm = setup.Model;
         await vm.DiffCommand.ExecuteAsync(null);
+        await vm.SetComparisonModeAsync(DatComparisonMode.AllDifferences);
+        vm.ConfirmModeChange = () => DatModeChangeChoice.Cancel;
         var row = vm.Rows.Single(r => r.Node.Path == "choice");
         Assert.Equal("10", row.LeftValue); Assert.Equal("20", row.RightValue);
         Assert.False(vm.Session!.IsDirty);
         Assert.True(vm.BeginCellEdit(row.RightCell)); vm.CellEditorText = "invalid";
         Assert.False(vm.CommitCellEdit()); Assert.False(vm.CanSaveRight);
-        vm.StructureComparison = true; vm.ShowHex = true; vm.DifferencesOnly = true;
+        await vm.SetComparisonModeAsync(DatComparisonMode.StructureDifferences); vm.ShowHex = true;
+        Assert.True(vm.DifferencesOnly); Assert.False(vm.StructureComparison);
         Assert.Equal("invalid", vm.CellEditorText); Assert.Contains(vm.Rows, r => r.Node.Path == "choice");
         setup.Confirm = false; vm.LoadOnly = true; Assert.False(vm.LoadOnly);
         vm.CellEditorText = "123"; Assert.True(vm.CommitCellEdit());
         Assert.True(vm.Session.Right.IsDirty); Assert.False(vm.Session.Left.IsDirty);
-        vm.StructureComparison = false; vm.DifferencesOnly = false; vm.ShowHex = false;
+        vm.ShowHex = false;
         row = vm.Rows.Single(r => r.Node.Path == "choice");
         Assert.Equal("123", row.RightValue); Assert.Equal("10", row.LeftValue);
         vm.ApplyRightRowCommand.Execute(row);
@@ -74,16 +77,16 @@ public sealed class DatWorkspaceTests
     }
 
     [Fact]
-    public async Task DifferenceFilterTracksCurrentContentsAndUndoRestoresDifference()
+    public async Task DifferenceFilterRetainsAppliedRowsAndUndoRestoresDifference()
     {
         using var setup = new Inputs(); var vm = setup.Model; await vm.DiffCommand.ExecuteAsync(null);
-        vm.DifferencesOnly = true;
+        await vm.SetComparisonModeAsync(DatComparisonMode.AllDifferences);
         Assert.DoesNotContain(vm.Rows, r => r.Node.Path == "common");
         vm.ApplyLeftRowCommand.Execute(vm.Rows.Single(r => r.Node.Path == "choice"));
-        Assert.DoesNotContain(vm.Rows, r => r.Node.Path == "choice");
+        Assert.Equal("동일", vm.Rows.Single(r => r.Node.Path == "choice").DifferenceText);
         vm.UndoCommand.Execute(null); Assert.Contains(vm.Rows, r => r.Node.Path == "choice");
-        vm.StructureComparison = true; Assert.Empty(vm.Rows);
-        vm.StructureComparison = false; Assert.Contains(vm.Rows, r => r.Node.Path == "choice");
+        await vm.SetComparisonModeAsync(DatComparisonMode.StructureDifferences); Assert.Empty(vm.Rows);
+        await vm.SetComparisonModeAsync(DatComparisonMode.All); Assert.Contains(vm.Rows, r => r.Node.Path == "choice");
     }
 
     [Fact]
@@ -113,7 +116,7 @@ public sealed class DatWorkspaceTests
         vm.Right.Headers.Clear(); vm.Right.AddFiles(new[] { secondHeader });
         File.WriteAllBytes(vm.Left.DatPath, DatTestData.Document(leftHeader).Data);
         File.WriteAllBytes(vm.Right.DatPath, DatTestData.Document(rightHeader).Data);
-        await vm.DiffCommand.ExecuteAsync(null); vm.DifferencesOnly = true;
+        await vm.DiffCommand.ExecuteAsync(null); await vm.SetComparisonModeAsync(DatComparisonMode.AllDifferences);
         var before = vm.Session!.Right.Current; setup.Confirm = false;
         vm.ApplyLeftRowCommand.Execute(vm.Rows.Single(r => r.Node.Path == "a[0].y"));
         Assert.Same(before, vm.Session.Right.Current); Assert.False(vm.Session.CanUndo);

@@ -10,6 +10,43 @@
         DragOver="Window_DragOver">
 
     <Window.Resources>
+        <Style x:Key="WorkspaceTabStyle" TargetType="TabItem">
+            <Setter Property="MinWidth" Value="140"/>
+            <Setter Property="MinHeight" Value="38"/>
+            <Setter Property="Padding" Value="20,9"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Foreground" Value="#ADB9C8"/>
+            <Setter Property="Background" Value="#252A32"/>
+            <Setter Property="BorderBrush" Value="#465160"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6,6,0,0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" TextElement.FontSize="13" TextElement.FontWeight="SemiBold"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#343E4A"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="#243E53"/>
+                                <Setter Property="Foreground" Value="#D8EEFF"/>
+                                <Setter Property="BorderBrush" Value="#71B6E8"/>
+                                <Setter TargetName="TabBorder" Property="BorderThickness" Value="1,3,1,1"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="#FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="#D4D4D4"/>
             <Setter Property="FontFamily" Value="Consolas"/>
@@ -80,7 +117,22 @@
     </Window.Resources>
 
     <DockPanel>
-        <TabControl x:Name="WorkspaceTabs" Background="#1E1E1E" BorderBrush="#444">
+        <TabControl x:Name="WorkspaceTabs" Background="#1E1E1E" BorderBrush="#444" Margin="8,8,8,0"
+                    ItemContainerStyle="{StaticResource WorkspaceTabStyle}">
+            <TabControl.Template>
+                <ControlTemplate TargetType="TabControl">
+                    <Grid Background="{TemplateBinding Background}" KeyboardNavigation.TabNavigation="Local">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <StackPanel IsItemsHost="True" Orientation="Horizontal" Margin="0,0,0,4"
+                                    KeyboardNavigation.TabIndex="1"/>
+                        <Border Grid.Row="1" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent"
+                                              HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                        </Border>
+                    </Grid>
+                </ControlTemplate>
+            </TabControl.Template>
             <TabItem Header="RealTime Viewer">
                 <DockPanel>
                     <Border DockPanel.Dock="Top" Background="#252526" Padding="12,9" BorderBrush="#444" BorderThickness="0,0,0,1">

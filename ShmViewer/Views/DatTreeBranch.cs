@@ -2,46 +2,72 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
+using System.ComponentModel;
 using ShmViewer.ViewModels;
 
 namespace ShmViewer.Views;
 
 public sealed class DatTreeBranch : Grid
 {
+    public static readonly DependencyProperty IsMirroredProperty = DependencyProperty.Register(nameof(IsMirrored),
+        typeof(bool), typeof(DatTreeBranch), new PropertyMetadata(false, (d, _) => ((DatTreeBranch)d).Refresh()));
+    public bool IsMirrored { get => (bool)GetValue(IsMirroredProperty); set => SetValue(IsMirroredProperty, value); }
+    private readonly BranchGuides _guides = new();
+    private readonly Button _toggle;
+    private DatRowViewModel? _observedRow;
+
     public DatTreeBranch()
     {
-        var guides = new BranchGuides();
-        Children.Add(guides);
-        var toggle = new Button
+        Children.Add(_guides);
+        _toggle = new Button
         {
             Width = 20, Height = 22, VerticalAlignment = VerticalAlignment.Top,
             Background = Brushes.Transparent, Foreground = Brushes.LightGray, BorderThickness = new Thickness(0),
             ToolTip = "하위 멤버 펼치기 / 접기 (양쪽 동기화)"
         };
-        toggle.SetBinding(ContentControl.ContentProperty, new Binding(nameof(DatRowViewModel.ToggleText)));
-        toggle.SetBinding(Button.CommandProperty, new Binding("Owner.ToggleCommand"));
-        toggle.SetBinding(Button.CommandParameterProperty, new Binding());
-        Children.Add(toggle);
-        DataContextChanged += (_, _) =>
-        {
-            var row = DataContext as DatRowViewModel;
-            Width = (row?.Node.Depth ?? 0) * 14 + 22;
-            toggle.Margin = new Thickness((row?.Node.Depth ?? 0) * 14, 4, 0, 0);
-            toggle.IsEnabled = row?.Node.Children.Count > 0;
-            toggle.Visibility = row?.Node.Children.Count > 0 ? Visibility.Visible : Visibility.Hidden;
-            guides.Row = row; guides.InvalidateVisual();
-        };
+        _toggle.SetBinding(Button.CommandProperty, new Binding("Owner.ToggleCommand"));
+        _toggle.SetBinding(Button.CommandParameterProperty, new Binding());
+        Children.Add(_toggle);
+        DataContextChanged += (_, _) => Observe(DataContext as DatRowViewModel);
+        Loaded += (_, _) => Observe(DataContext as DatRowViewModel);
+        Unloaded += (_, _) => Observe(null);
+    }
+
+    private void Observe(DatRowViewModel? row)
+    {
+        if (_observedRow != null) _observedRow.PropertyChanged -= RowChanged;
+        _observedRow = row;
+        if (_observedRow != null) _observedRow.PropertyChanged += RowChanged;
+        Refresh();
+    }
+    private void RowChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
+    private void Refresh()
+    {
+        if (_toggle == null) return;
+        var row = DataContext as DatRowViewModel;
+        var indent = (row?.Node.Depth ?? 0) * 14;
+        Width = indent + 22;
+        _toggle.HorizontalAlignment = IsMirrored ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+        _toggle.Margin = IsMirrored ? new Thickness(0, 4, indent, 0) : new Thickness(indent, 4, 0, 0);
+        _toggle.Content = row?.Node.IsExpanded == true ? "▼" : IsMirrored ? "◀" : "▶";
+        _toggle.IsEnabled = row?.HasVisibleChildren == true;
+        _toggle.Visibility = row?.HasVisibleChildren == true ? Visibility.Visible : Visibility.Hidden;
+        _guides.Row = row;
+        _guides.IsMirrored = IsMirrored;
+        _guides.InvalidateVisual();
     }
 
     private sealed class BranchGuides : FrameworkElement
     {
         public DatRowViewModel? Row { get; set; }
+        public bool IsMirrored { get; set; }
         private static readonly Pen GuidePen = new(new SolidColorBrush(Color.FromRgb(128, 153, 177)), 1);
         static BranchGuides() => GuidePen.Freeze();
         protected override void OnRender(DrawingContext drawingContext)
         {
             base.OnRender(drawingContext);
             if (Row == null) return;
+            double X(double value) => IsMirrored ? ActualWidth - value : value;
             const double junction = 15;
             var branches = Row.TreeBranches;
             for (var i = 0; i < branches.Length; i++)
@@ -49,14 +75,14 @@ public sealed class DatTreeBranch : Grid
                 var x = i * 14 + 10.5;
                 var last = i == branches.Length - 1;
                 if (branches[i] || last)
-                    drawingContext.DrawLine(GuidePen, new Point(x, 0), new Point(x, branches[i] ? ActualHeight : junction));
-                if (last) drawingContext.DrawLine(GuidePen, new Point(x, junction),
-                    new Point(Row.Node.Children.Count > 0 ? (i + 1) * 14 : ActualWidth - 2, junction));
+                    drawingContext.DrawLine(GuidePen, new Point(X(x), 0), new Point(X(x), branches[i] ? ActualHeight : junction));
+                if (last) drawingContext.DrawLine(GuidePen, new Point(X(x), junction),
+                    new Point(X(Row.HasVisibleChildren ? (i + 1) * 14 : ActualWidth - 2), junction));
             }
             if (Row.Node.IsExpanded && Row.HasVisibleChildren)
             {
                 var x = Row.Node.Depth * 14 + 10.5;
-                drawingContext.DrawLine(GuidePen, new Point(x, junction + 9), new Point(x, ActualHeight));
+                drawingContext.DrawLine(GuidePen, new Point(X(x), junction + 9), new Point(X(x), ActualHeight));
             }
         }
     }
