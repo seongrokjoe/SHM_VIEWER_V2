@@ -13,82 +13,12 @@ namespace ShmViewer.Tests;
 public sealed partial class ViewerUiTests
 {
     [Fact]
-    public Task StructArrayMemberCheckboxesAndEmptyCellsWorkInRenderedView() => RunSta(async () =>
-    {
-        using var setup = new DatWorkspaceTests.Inputs(); var diff = setup.Model;
-        File.WriteAllText(diff.Left.Headers[0].Path, DatArrayMemberTests.Header);
-        File.WriteAllBytes(diff.Left.DatPath, DatArrayMemberTests.Input(false).Bytes.ToArray());
-        File.WriteAllBytes(diff.Right.DatPath, DatArrayMemberTests.Input(true).Bytes.ToArray());
-        using var vm = new MainViewModel(new MemoryStore(), _ => true, diff);
-        var window = new MainWindow(vm) { Width = 1600, Height = 1000, Left = -12000, Top = -12000, ShowActivated = false };
-        try
-        {
-            window.Show(); ((TabControl)window.FindName("WorkspaceTabs")).SelectedIndex = 1;
-            await diff.DiffCommand.ExecuteAsync(null); diff.DifferencesOnly = true;
-            var view = Find<DatDiffView>(window)!;
-            var grid = (DataGrid)view.FindName("ComparisonGrid");
-            DatRowViewModel Row(int i) => diff.Rows.Single(r => r.Node.Path == DatArrayMemberTests.Prefix + $"[{i}]");
-            DataGridRow Container(int i)
-            {
-                var row = Row(i); grid.SelectedItem = row; grid.ScrollIntoView(row); grid.UpdateLayout();
-                return (DataGridRow)grid.ItemContainerGenerator.ContainerFromItem(row);
-            }
-            static void Click(CheckBox toggle) =>
-                typeof(System.Windows.Controls.Primitives.ToggleButton).GetMethod("OnClick",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(toggle, null);
-            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-            var container = Container(0);
-            var choice = AllVisuals<CheckBox>(container).Single(c => ReferenceEquals(c.Command, diff.CheckRightCommand));
-            Assert.True(choice.IsVisible); Assert.True(choice.IsEnabled); Assert.False(choice.IsChecked);
-            Assert.Equal(string.Empty, Row(0).TargetValue); Assert.False(diff.CanSave);
-            Render(window, "dat-array-members-unassigned.png");
-            Click(choice);
-            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-            Assert.Equal("20", Row(0).TargetValue); Assert.True(Row(0).RightChecked);
-
-            container = Container(3);
-            var cell = Find<DatValueCell>(container)!;
-            cell.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
-                { RoutedEvent = Control.MouseDoubleClickEvent });
-            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-            Assert.True(diff.HasCellEdit); Assert.Equal(string.Empty, diff.CellEditorText);
-            var editor = (TextBox)cell.FindName("ValueEditor");
-            Assert.True(editor.IsVisible);
-            editor.Text = "33"; editor.GetBindingExpression(TextBox.TextProperty)!.UpdateSource();
-            editor.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(editor), 0, Key.Enter)
-                { RoutedEvent = Keyboard.PreviewKeyDownEvent });
-            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-            Assert.False(diff.HasCellEdit); Assert.Equal("33", Row(3).TargetValue);
-
-            Container(6);
-            grid.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(grid), 0, Key.F2)
-                { RoutedEvent = Keyboard.PreviewKeyDownEvent });
-            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-            Assert.True(diff.HasCellEdit); Assert.Equal(string.Empty, diff.CellEditorText);
-            diff.CellEditorText = "0"; Assert.True(diff.CommitCellEdit());
-            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-            Assert.True(diff.CanSave); Assert.Equal(64, diff.Session!.Result.Length);
-            Render(window, "dat-array-members-resolved.png");
-
-            container = Container(0);
-            choice = AllVisuals<CheckBox>(container).Single(c => ReferenceEquals(c.Command, diff.CheckRightCommand));
-            Click(choice);
-            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-            Assert.Equal(string.Empty, Row(0).TargetValue); Assert.NotNull(Row(0).Node.Target); Assert.False(diff.CanSave);
-            diff.UndoCommand.Execute(null); Assert.True(diff.CanSave);
-            diff.RedoCommand.Execute(null); Assert.False(diff.CanSave);
-            diff.ShowHex = true; Assert.Equal(string.Empty, Row(0).TargetValue);
-        }
-        finally { window.Close(); }
-    });
-
-    [Fact]
     public Task LoadOnlyCellsColumnsWheelAndHeaderSelectionWorkInRenderedView() => RunSta(async () =>
     {
         using var setup = new DatWorkspaceTests.Inputs(); var diff = setup.Model;
         const string header = "struct Item { int x; int y; }; struct Root { Item items[80]; };";
         File.WriteAllText(diff.Left.Headers[0].Path, header);
-        var data = DatMergeTests.Document(header, ("items[0].x", "7"));
+        var data = DatTestData.Document(header, ("items[0].x", "7"));
         File.WriteAllBytes(diff.Left.DatPath, data.Bytes.ToArray());
         using var vm = new MainViewModel(new MemoryStore(), _ => true, diff);
         var window = new MainWindow(vm) { Width = 1440, Height = 900, Left = -12000, Top = -12000, ShowActivated = false };

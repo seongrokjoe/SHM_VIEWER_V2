@@ -24,7 +24,7 @@ public sealed class DatWorkspaceTests
             {
                 input.AddFiles(new[] { path }); input.StructName = "Root";
                 input.DatPath = Path.Combine(_directory, $"v{version}.dat");
-                var doc = DatMergeTests.Document(header, ("common", "7"), ("choice", version == 1 ? "10" : "20"),
+                var doc = DatTestData.Document(header, ("common", "7"), ("choice", version == 1 ? "10" : "20"),
                     ("items[0]", "1"), ("items[1]", version == 1 ? "2" : "3"), ("text", "\"test\""));
                 File.WriteAllBytes(input.DatPath, doc.Bytes.ToArray());
             }
@@ -33,104 +33,105 @@ public sealed class DatWorkspaceTests
     }
 
     [Fact]
-    public async Task LoadOnlyValidatesOnlyChosenInputAndKeepsSourceImmutable()
+    public async Task LoadOnlyValidatesOnlyChosenInputAndAllowsBackupSave()
     {
         using var setup = new Inputs(); var vm = setup.Model;
         vm.Right.DatPath = "missing.dat"; vm.Right.StructName = "Missing";
         vm.LoadOnly = true; await vm.DiffCommand.ExecuteAsync(null);
         Assert.NotNull(vm.ViewerDocument); Assert.Null(vm.Session); Assert.Empty(vm.Rows);
-        Assert.Equal("10", vm.ViewerRows.Single(r => r.Node.Field.Path == "choice").Value);
-        Assert.Equal(24, vm.ViewerDocument.Schema.Root.Size);
-        Assert.False(vm.CanEdit); Assert.True(vm.CanEditValues); Assert.True(vm.CanSave); Assert.False(vm.UseLeftCommand.CanExecute(null));
-        Assert.False(vm.UndoCommand.CanExecute(null)); Assert.False(vm.MapLeftCommand.CanExecute(null));
-        vm.UseLeftCommand.Execute(null); vm.SetZeroCommand.Execute(null); Assert.Null(vm.Session);
-        var document = vm.ViewerDocument;
-        vm.Right.Pack = "2"; Assert.Same(document, vm.ViewerDocument);
-        vm.ToggleViewerCommand.Execute(vm.ViewerRows.Single(r => r.Node.Field.Path == "items"));
-        Assert.Contains(vm.ViewerRows, r => r.Node.Field.Path == "items[1]" && r.Value == "2");
-        vm.ShowHex = true;
-        Assert.Equal("hex:0A000000", vm.ViewerRows.Single(r => r.Node.Field.Path == "choice").Value);
-        Assert.Contains(vm.ViewerRows, r => r.Node.Field.Path == "items[1]");
-        vm.ViewerUsesRight = true;
-        Assert.Null(vm.ViewerDocument); Assert.Empty(vm.ViewerRows);
-        await vm.DiffCommand.ExecuteAsync(null);
-        Assert.Null(vm.ViewerDocument); Assert.Contains("버전2", vm.Status);
+        Assert.Equal("10", vm.ViewerRows.Single(r => r.Path == "choice").Value);
+        Assert.False(vm.UseLeftCommand.CanExecute(null)); Assert.True(vm.CanSave);
+        var doc = vm.ViewerDocument; vm.Right.Pack = "2"; Assert.Same(doc, vm.ViewerDocument);
+        vm.BeginCellEdit(vm.ViewerRows.Single(r => r.Path == "choice")); vm.CellEditorText = "99"; Assert.True(vm.CommitCellEdit());
+        DatSaveResult? result = null; vm.ShowSaveNotice = (saved, label) => { result = saved; Assert.Equal("버전1", label); };
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.NotNull(result); Assert.False(vm.ViewerSession!.IsDirty);
+        Assert.Equal(doc!.Bytes.ToArray(), File.ReadAllBytes(result!.BackupPath));
+        vm.UndoCommand.Execute(null); Assert.True(vm.ViewerSession.IsDirty);
     }
 
     [Fact]
-    public async Task ViewerCanLoadRightAndRejectSizeMismatch()
+    public async Task SideCellsUseIndependentValuesAndDraftsSurviveDisplayChanges()
     {
         using var setup = new Inputs(); var vm = setup.Model;
-        vm.Left.StructName = "Missing"; vm.LoadOnly = true; vm.ViewerUsesRight = true;
         await vm.DiffCommand.ExecuteAsync(null);
-        Assert.Equal("20", vm.ViewerRows.Single(r => r.Node.Field.Path == "choice").Value);
-        Assert.Contains("버전2", vm.ViewerSummary);
-        File.WriteAllBytes(vm.Right.DatPath, new byte[1]);
-        vm.Right.Pack = "1";
-        await vm.DiffCommand.ExecuteAsync(null);
-        Assert.Null(vm.ViewerDocument); Assert.Contains("DAT 크기 불일치", vm.Status);
+        var row = vm.Rows.Single(r => r.Node.Path == "choice");
+        Assert.Equal("10", row.LeftValue); Assert.Equal("20", row.RightValue);
+        Assert.False(vm.Session!.IsDirty);
+        Assert.True(vm.BeginCellEdit(row.RightCell)); vm.CellEditorText = "invalid";
+        Assert.False(vm.CommitCellEdit()); Assert.False(vm.CanSaveRight);
+        vm.StructureComparison = true; vm.ShowHex = true; vm.DifferencesOnly = true;
+        Assert.Equal("invalid", vm.CellEditorText); Assert.Contains(vm.Rows, r => r.Node.Path == "choice");
+        setup.Confirm = false; vm.LoadOnly = true; Assert.False(vm.LoadOnly);
+        vm.CellEditorText = "123"; Assert.True(vm.CommitCellEdit());
+        Assert.True(vm.Session.Right.IsDirty); Assert.False(vm.Session.Left.IsDirty);
+        vm.StructureComparison = false; vm.DifferencesOnly = false; vm.ShowHex = false;
+        row = vm.Rows.Single(r => r.Node.Path == "choice");
+        Assert.Equal("123", row.RightValue); Assert.Equal("10", row.LeftValue);
+        vm.ApplyRightRowCommand.Execute(row);
+        Assert.Equal("123", vm.Rows.Single(r => r.Node.Path == "choice").LeftValue);
+        Assert.False(vm.Session.Nodes.Single(n => n.Path == "choice").HasDifference);
     }
 
     [Fact]
-    public async Task ModeSwitchAsksOnceKeepsInputsAndCancelKeepsEdits()
+    public async Task DifferenceFilterTracksCurrentContentsAndUndoRestoresDifference()
+    {
+        using var setup = new Inputs(); var vm = setup.Model; await vm.DiffCommand.ExecuteAsync(null);
+        vm.DifferencesOnly = true;
+        Assert.DoesNotContain(vm.Rows, r => r.Node.Path == "common");
+        vm.ApplyLeftRowCommand.Execute(vm.Rows.Single(r => r.Node.Path == "choice"));
+        Assert.DoesNotContain(vm.Rows, r => r.Node.Path == "choice");
+        vm.UndoCommand.Execute(null); Assert.Contains(vm.Rows, r => r.Node.Path == "choice");
+        vm.StructureComparison = true; Assert.Empty(vm.Rows);
+        vm.StructureComparison = false; Assert.Contains(vm.Rows, r => r.Node.Path == "choice");
+    }
+
+    [Fact]
+    public async Task SaveReloadUsesSidecarEvenWithMissingHeadersAndPopupOccursOnlyOnSuccess()
+    {
+        using var setup = new Inputs(); var vm = setup.Model; await vm.DiffCommand.ExecuteAsync(null);
+        var notices = 0; vm.ShowSaveNotice = (_, _) => notices++;
+        vm.BeginCellEdit(vm.Rows.Single(r => r.Node.Path == "choice").LeftCell);
+        vm.CellEditorText = "88"; vm.CommitCellEdit();
+        await vm.SaveLeftCommand.ExecuteAsync(null); Assert.Equal(1, notices);
+        vm.FileStore = new() { BeforeStage = _ => throw new IOException("save failure") };
+        await vm.SaveLeftCommand.ExecuteAsync(null); Assert.Equal(1, notices); Assert.Contains("저장 실패", vm.Status);
+        File.Delete(vm.Left.Headers[0].Path);
+        vm.LoadOnly = true; await vm.DiffCommand.ExecuteAsync(null);
+        Assert.NotNull(vm.ViewerDocument); Assert.True(vm.ViewerDocument.LoadedFromSchema);
+        Assert.Equal("88", vm.ViewerRows.Single(r => r.Path == "choice").Value);
+    }
+
+    [Fact]
+    public async Task ScopeExpansionCancelKeepsBothDocumentsAndHistory()
     {
         using var setup = new Inputs(); var vm = setup.Model;
-        await vm.DiffCommand.ExecuteAsync(null);
-        var session = vm.Session;
+        const string leftHeader = "struct Item { int x; int y; }; struct Root { Item a[2]; };";
+        const string rightHeader = "struct Item { int x; }; struct Root { Item a[2]; };";
+        File.WriteAllText(vm.Left.Headers[0].Path, leftHeader);
+        var secondHeader = Path.Combine(Path.GetDirectoryName(vm.Right.DatPath)!, "right.h"); File.WriteAllText(secondHeader, rightHeader);
+        vm.Right.Headers.Clear(); vm.Right.AddFiles(new[] { secondHeader });
+        File.WriteAllBytes(vm.Left.DatPath, DatTestData.Document(leftHeader).Data);
+        File.WriteAllBytes(vm.Right.DatPath, DatTestData.Document(rightHeader).Data);
+        await vm.DiffCommand.ExecuteAsync(null); vm.DifferencesOnly = true;
+        var before = vm.Session!.Right.Current; setup.Confirm = false;
+        vm.ApplyLeftRowCommand.Execute(vm.Rows.Single(r => r.Node.Path == "a[0].y"));
+        Assert.Same(before, vm.Session.Right.Current); Assert.False(vm.Session.CanUndo);
+        setup.Confirm = true; vm.ApplyLeftRowCommand.Execute(vm.Rows.Single(r => r.Node.Path == "a[0].y"));
+        Assert.NotNull(vm.Session.Field(DatSourceVersion.Version2, "a[1].y"));
+    }
+
+    [Fact]
+    public async Task ResetAndModeChangeRespectCancelAndKeepOtherWorkspaceSettings()
+    {
+        using var setup = new Inputs(); var vm = setup.Model; await vm.DiffCommand.ExecuteAsync(null);
         vm.SelectedRow = vm.Rows.Single(r => r.Node.Path == "choice"); vm.EditorText = "123";
-        setup.Confirm = false; vm.LoadOnly = true;
-        Assert.Equal(1, setup.Confirmations); Assert.False(vm.LoadOnly); Assert.Same(session, vm.Session);
-        Assert.True(vm.HasPendingEdit); Assert.Equal("123", vm.EditorText);
-        setup.Confirm = true; vm.LoadOnly = true;
-        Assert.Equal(2, setup.Confirmations); Assert.True(vm.LoadOnly); Assert.Null(vm.Session); Assert.Empty(vm.Rows);
-        Assert.False(vm.HasPendingEdit); Assert.Equal("Root", vm.Left.StructName); Assert.Single(vm.Left.Headers);
-        await vm.DiffCommand.ExecuteAsync(null); vm.LoadOnly = false;
-        Assert.Equal(3, setup.Confirmations); Assert.Null(vm.ViewerDocument); Assert.Empty(vm.ViewerRows); Assert.Null(vm.Session);
-        Assert.False(vm.UndoCommand.CanExecute(null));
-    }
-
-    [Fact]
-    public async Task ResetClearsAllInputsResultsAndOptionsWithOneConfirmation()
-    {
-        using var setup = new Inputs(); var vm = setup.Model;
-        vm.IsInitData = true; vm.Left.IncludeDirectories = Path.GetTempPath(); vm.Left.Defines = "MODE=1"; vm.Left.Pack = "2";
-        await vm.DiffCommand.ExecuteAsync(null);
-        vm.SelectedRow = vm.Rows.Single(r => r.Node.Path == "choice"); vm.UseRightCommand.Execute(null);
-        vm.EditorText = "invalid"; vm.ApplyValueCommand.Execute(null); Assert.NotEmpty(vm.EditorError);
-        vm.DifferencesOnly = true; vm.ShowHex = true; vm.EncodingName = "UTF-8";
-        var session = vm.Session;
-        setup.Confirm = false; vm.ResetCommand.Execute(null);
-        Assert.Equal(1, setup.Confirmations); Assert.Same(session, vm.Session); Assert.True(vm.HasPendingEdit);
+        setup.Confirm = false; var session = vm.Session;
+        vm.LoadOnly = true; vm.ResetCommand.Execute(null);
+        Assert.False(vm.LoadOnly); Assert.Same(session, vm.Session); Assert.Equal("123", vm.EditorText);
         setup.Confirm = true; vm.ResetCommand.Execute(null);
-        Assert.Equal(2, setup.Confirmations);
-        Assert.Null(vm.Session); Assert.Null(vm.ViewerDocument); Assert.Empty(vm.Rows); Assert.Empty(vm.SelectedNodes);
-        Assert.Null(vm.SelectedRow); Assert.Empty(vm.EditorText); Assert.Empty(vm.EditorError); Assert.False(vm.HasPendingEdit);
-        Assert.Empty(vm.LeftMapping); Assert.Empty(vm.RightMapping); Assert.Null(vm.SelectedUnionBranch);
-        Assert.True(vm.IsRunData); Assert.False(vm.LoadOnly); Assert.True(vm.ViewerUsesLeft);
-        Assert.False(vm.DifferencesOnly); Assert.False(vm.ShowHex); Assert.Equal("ASCII", vm.EncodingName);
-        foreach (var input in new[] { vm.Left, vm.Right })
-        {
-            Assert.Empty(input.Headers); Assert.Empty(input.DatPath); Assert.Empty(input.StructName); Assert.Empty(input.Defines);
-            Assert.Empty(input.IncludeDirectories); Assert.Equal("8", input.Pack); Assert.False(input.UseSctcPath); Assert.Null(input.SelectedHeader);
-        }
-        vm.ResetCommand.Execute(null); Assert.Equal(2, setup.Confirmations);
-    }
-
-    [Fact]
-    public async Task CheckboxColorsAndStateSurviveFilterAndUndo()
-    {
-        using var setup = new Inputs(); var vm = setup.Model;
-        await vm.DiffCommand.ExecuteAsync(null);
-        DatRowViewModel Choice() => vm.Rows.Single(r => r.Node.Path == "choice");
-        vm.CheckRightCommand.Execute(Choice());
-        Assert.True(Choice().RightChecked); Assert.False(Choice().LeftChecked);
-        Assert.Equal(Choice().RightBackground, Choice().TargetBackground); Assert.NotEqual(Choice().LeftBackground, Choice().TargetBackground);
-        Assert.Contains("버전2 적용 완료", Choice().ResultState); Assert.True(Choice().ValueDiffers); Assert.False(Choice().SizeDiffers);
-        vm.DifferencesOnly = true; Assert.True(Choice().RightChecked);
-        vm.CheckRightCommand.Execute(Choice()); Assert.Null(Choice().Node.Target);
-        vm.UndoCommand.Execute(null); Assert.True(Choice().RightChecked);
-        vm.SelectedRow = Choice(); vm.EditorText = "99"; vm.ApplyValueCommand.Execute(null);
-        Assert.False(Choice().RightChecked); Assert.Contains("직접 입력", Choice().ResultState);
-        Assert.NotEqual(Choice().RightBackground, Choice().TargetBackground);
+        Assert.Null(vm.Session); Assert.Empty(vm.Rows); Assert.Empty(vm.Left.Headers);
+        Assert.Empty(vm.Right.DatPath); Assert.False(vm.StructureComparison); Assert.True(vm.ActiveLeft);
+        Assert.False(vm.HasPendingEdit); Assert.False(vm.ShowViewerOffset);
     }
 }

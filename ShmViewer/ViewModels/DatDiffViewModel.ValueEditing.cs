@@ -11,17 +11,17 @@ public interface IDatValueRow
     bool CanEditValue { get; }
     string EditableValue { get; }
 }
+public sealed record DatCellTarget(DatSourceVersion Version, string Path);
 
 public partial class DatDiffViewModel
 {
     public DatEditSession? ViewerSession { get; private set; }
     public object? CellEditTarget { get; private set; }
-    private DatSourceVersion? _cellEditFormat;
     public bool HasCellEdit => CellEditTarget != null;
     public bool CanEditValues => CanInteract && (Session != null || ViewerSession != null);
     public bool CanUndo => CanEditValues && (LoadOnly ? ViewerSession?.CanUndo == true : Session?.CanUndo == true);
     public bool CanRedo => CanEditValues && (LoadOnly ? ViewerSession?.CanRedo == true : Session?.CanRedo == true);
-    public string SaveLabel => LoadOnly ? "DAT 다른 이름으로 저장…" : "버전3 DAT 저장…";
+    public string SaveLabel => "DAT 저장 · 원본 백업";
     [ObservableProperty] private string _cellEditorText = string.Empty;
     [ObservableProperty] private string _cellEditorError = string.Empty;
     [ObservableProperty] private bool _showViewerPath = true;
@@ -36,73 +36,51 @@ public partial class DatDiffViewModel
         if (Equals(CellEditTarget, row.EditTarget)) return true;
         if (HasCellEdit && !CommitCellEdit()) return false;
         if (HasPendingEdit && !_confirm("적용하지 않은 입력을 버리고 셀을 편집하시겠습니까?")) return false;
-        DatSourceVersion? format = null;
-        if (row.EditTarget is DatMergeNode editNode && !TryChooseValueFormat(editNode, out format)) return false;
-        LoadEditor();
-        _cellEditFormat = format;
-        CellEditTarget = row.EditTarget;
-        var field = row.EditTarget is DatMergeNode node ? node.Target! : (BinaryField)row.EditTarget;
-        var data = LoadOnly ? ViewerSession!.Data : Session!.Result;
-        CellEditorText = row.EditTarget is DatMergeNode n && (n.Target == null || n.HasUnassignedValue)
-            ? string.Empty : BinaryValueCodec.FormatForEdit(data, field, EncodingName, ShowHex);
-        CellEditorError = string.Empty;
-        RefreshCellEditors();
-        return true;
+        var target = row.EditTarget;
+        if (target is DatCellTarget side)
+        {
+            _activeVersion = side.Version;
+            _selectedRow = Rows.FirstOrDefault(r => r.Node.Path == side.Path);
+            OnPropertyChanged(nameof(SelectedRow)); NotifyActiveVersion();
+        }
+        LoadEditor(); CellEditTarget = target;
+        var field = target is DatCellTarget cell ? Session!.Field(cell.Version, cell.Path)! : (BinaryField)target;
+        var data = target is DatCellTarget c ? Session!.Version(c.Version).Current.Data : ViewerSession!.Data;
+        CellEditorText = BinaryValueCodec.FormatForEdit(data, field, EncodingName, ShowHex);
+        CellEditorError = string.Empty; RefreshCellEditors(); return true;
     }
-
     public bool CommitCellEdit()
     {
         if (!HasCellEdit) return true;
         if (!CanEditValues) return false;
         try
         {
-            if (CellEditTarget is DatMergeNode node) Session!.SetValue(node, CellEditorText, EncodingName, _cellEditFormat);
+            if (CellEditTarget is DatCellTarget cell) Session!.SetValue(cell.Version, cell.Path, CellEditorText, EncodingName);
             else ViewerSession!.SetValue((BinaryField)CellEditTarget!, CellEditorText, EncodingName);
-            ClearCellEdit();
-            RebuildRows(); RebuildViewerRows(); LoadEditor(); UpdateSummary(); NotifyState();
-            return true;
+            ClearCellEdit(); RebuildRows(); RebuildViewerRows(); LoadEditor(); UpdateSummary(); return true;
         }
-        catch (Exception ex)
-        {
-            CellEditorError = ex.Message;
-            return false;
-        }
+        catch (Exception ex) { CellEditorError = ex.Message; return false; }
     }
-
     [RelayCommand] private void ApplyCellEdit() => CommitCellEdit();
-
-    [RelayCommand]
-    private void CancelCellEdit()
-    {
-        ClearCellEdit(); RefreshCellEditors();
-    }
-
+    [RelayCommand] private void CancelCellEdit()
+    { ClearCellEdit(); RebuildRows(); RefreshCellEditors(); }
     private void ClearCellEdit()
-    {
-        CellEditTarget = null; _cellEditFormat = null; CellEditorText = CellEditorError = string.Empty;
-    }
-
+    { CellEditTarget = null; CellEditorText = CellEditorError = string.Empty; }
     private void RefreshCellEditors()
     {
         foreach (var row in Rows) row.RefreshValue();
         foreach (var row in ViewerRows) row.RefreshValue();
         NotifyState();
     }
-
     private void EditHistory(bool undo)
     {
-        if (!CanEditValues || (HasPendingEdit || HasCellEdit) &&
-            !_confirm("적용하지 않은 입력을 버리고 이 작업을 수행하시겠습니까?")) return;
-        ClearCellEdit();
+        if (!CanEditValues || (HasPendingEdit || HasCellEdit) && !_confirm("적용하지 않은 입력을 버리고 이 작업을 수행하시겠습니까?")) return;
+        ClearCellEdit(); HasPendingEdit = false; EditorError = string.Empty;
         if (LoadOnly)
         {
             if (undo) ViewerSession!.Undo(); else ViewerSession!.Redo();
-            RebuildViewerRows(); NotifyState();
+            RebuildViewerRows(); UpdateSummary();
         }
-        else
-        {
-            HasPendingEdit = false;
-            Edit(() => { if (undo) Session!.Undo(); else Session!.Redo(); });
-        }
+        else Edit(() => { if (undo) Session!.Undo(); else Session!.Redo(); });
     }
 }

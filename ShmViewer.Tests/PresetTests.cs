@@ -99,7 +99,7 @@ public sealed class PresetTests
         Assert.False(input.UseSctcPath); Assert.Empty(input.Headers); Assert.Equal(1, calls);
         var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "missing.h");
         var custom = new DatInputViewModel("버전1", () => true, () => SctcDataKind.Run);
-        custom.AddFiles(new[] { missing }); custom.StructName = "Root";
+        custom.AddFiles(new[] { missing }); custom.StructName = "Root"; custom.DatPath = "missing.dat";
         Assert.Contains(missing, Assert.Throws<InvalidDataException>(() => custom.Capture()).Message);
     }
     [Fact]

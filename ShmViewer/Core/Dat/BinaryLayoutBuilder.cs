@@ -49,7 +49,7 @@ internal static class BinaryLayoutBuilder
         {
             Name = template.Name, Kind = BinaryKind.Record, Pack = template.Pack,
             ExplicitAlignment = template.ExplicitAlignment, Alignment = alignment,
-            Size = members.Count == 0 ? 0 : Align(position, alignment)
+            Size = members.Count == 0 ? alignment : Align(position, alignment)
         };
         result.Members.AddRange(output);
         return result;

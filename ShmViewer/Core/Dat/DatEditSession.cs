@@ -8,6 +8,7 @@ public sealed class DatEditSession
     internal byte[] Data { get; private set; }
     public ReadOnlyMemory<byte> Bytes => Data;
     private byte[] _saved;
+    private readonly DatVersionState _state;
     private readonly List<byte[]> _undo = new();
     private readonly List<byte[]> _redo = new();
     public bool IsDirty => !Data.AsSpan().SequenceEqual(_saved);
@@ -17,6 +18,7 @@ public sealed class DatEditSession
     public DatEditSession(DatDocument document)
     {
         Document = document;
+        _state = new(document);
         Data = document.Bytes.ToArray();
         _saved = Data;
     }
@@ -44,9 +46,11 @@ public sealed class DatEditSession
         _undo.Add(Data); Data = _redo[^1]; _redo.RemoveAt(_redo.Count - 1);
     }
 
-    public void Save(string path)
+    public DatSaveResult Save(DatFileStore? store = null)
     {
-        DatDocument.SaveAtomic(path, Data, Document.FilePath);
+        _state.Current = new(Document.FilePath, Document.Schema, Data);
+        var result = _state.Save(store ?? new());
         _saved = Data;
+        return result;
     }
 }

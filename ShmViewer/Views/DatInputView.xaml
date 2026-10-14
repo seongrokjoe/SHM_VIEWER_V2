@@ -31,6 +31,7 @@
    <DockPanel Margin="0,5,0,0">
     <TextBlock Text="Struct " Width="52"/><TextBox Text="{Binding StructName, UpdateSourceTrigger=LostFocus}"/>
    </DockPanel>
+   <CheckBox Content="헤더 사용 (자동 구조 파일 대신)" IsChecked="{Binding UseHeader}" Foreground="#DDD" Margin="0,5,0,0" ToolTip="기본: DAT 옆의 .dat.schema.json을 자동으로 읽습니다. 구조 파일이 없으면 헤더와 Struct를 사용합니다."/>
    <Expander x:Name="OptionsExpander" Header="파싱 옵션 · Windows x64" Foreground="#BBBBBB" Margin="0,5,0,0">
     <StackPanel Margin="0,4,0,0">
      <DockPanel><TextBlock Text="기본 Pack " Width="82"/><TextBox Text="{Binding Pack}" Width="45" HorizontalAlignment="Left"/></DockPanel>

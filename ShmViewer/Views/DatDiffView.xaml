@@ -21,10 +21,17 @@
     <views:DatInputView x:Name="LeftInput" Grid.Column="0" DataContext="{Binding Left}"/>
     <views:DatInputView x:Name="RightInput" Grid.Column="1" DataContext="{Binding Right}"/>
    </Grid>
-    <DockPanel Margin="10,0,10,7" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
-     <TextBlock Text="버전3 · 결과  " Foreground="#9CDCFE" FontWeight="Bold"/>
-     <TextBlock Text="{Binding ResultSummary}" Foreground="#D5E6DB" TextWrapping="Wrap"/>
-    </DockPanel>
+    <Grid Margin="10,0,10,7" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
+     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+     <DockPanel Margin="0,0,8,0">
+      <Button DockPanel.Dock="Right" Content="버전1 저장" Command="{Binding SaveLeftCommand}" Margin="8,0"/>
+      <TextBlock Text="{Binding LeftSummary}" Foreground="#93CDFF" TextWrapping="Wrap"/>
+     </DockPanel>
+     <DockPanel Grid.Column="1">
+      <Button DockPanel.Dock="Right" Content="버전2 저장" Command="{Binding SaveRightCommand}" Margin="8,0"/>
+      <TextBlock Text="{Binding RightSummary}" Foreground="#98E5BB" TextWrapping="Wrap"/>
+     </DockPanel>
+    </Grid>
     <TextBlock Text="{Binding ViewerSummary}" ToolTip="{Binding ViewerSummary}" Foreground="#9CDCFE" TextTrimming="CharacterEllipsis" Margin="10,0,10,7" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
    </StackPanel>
   </ScrollViewer>
@@ -34,7 +41,6 @@
    <Button Content="취소" Command="{Binding CancelCommand}" Margin="0,0,12,0" Visibility="{Binding IsBusy, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
    <StackPanel Orientation="Horizontal" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
    <CheckBox x:Name="StructureComparisonOption" Content="구조 비교" IsChecked="{Binding StructureComparison}" IsEnabled="{Binding CanInteract}" Foreground="#9CDCFE" VerticalAlignment="Center" Margin="0,0,8,0"/>
-   <TextBlock Text="{Binding BaseLabel}" Foreground="#9CDCFE" VerticalAlignment="Center" Margin="0,0,8,0"/>
    <CheckBox Content="{Binding DifferenceFilterLabel}" IsChecked="{Binding DifferencesOnly}" Foreground="#DDD" VerticalAlignment="Center" Margin="0,0,10,0"/>
    <Button Content="◀ 이전 차이" Command="{Binding PreviousDifferenceCommand}" Margin="0,0,4,0"/>
    <Button Content="다음 차이 ▶" Command="{Binding NextDifferenceCommand}" Margin="0,0,12,0"/>
@@ -45,14 +51,18 @@
    <StackPanel Orientation="Horizontal">
    <Button Content="실행 취소" Command="{Binding UndoCommand}" Margin="0,0,4,0"/>
    <Button Content="다시 실행" Command="{Binding RedoCommand}" Margin="0,0,12,0"/>
-   <Button Content="{Binding SaveLabel}" Command="{Binding SaveCommand}" Style="{DynamicResource DarkBtn}"/>
+   <Button Content="{Binding SaveLabel}" Command="{Binding SaveCommand}" Style="{DynamicResource DarkBtn}" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+   </StackPanel>
+   <StackPanel Orientation="Horizontal" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
+    <Button Content="← 버전2를 버전1에 적용" Command="{Binding UseRightCommand}" Margin="8,0,4,0"/>
+    <Button Content="버전1을 버전2에 적용 →" Command="{Binding UseLeftCommand}"/>
    </StackPanel>
    <Button Content="컬럼 표시 ▾" Click="Columns_Click" Margin="8,0,0,0" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
   </WrapPanel>
   <DataGrid x:Name="ComparisonGrid" Grid.Row="2" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
    Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}"
    PreviewKeyDown="ComparisonGrid_PreviewKeyDown" PreviewMouseWheel="Grid_PreviewMouseWheel" VirtualizingPanel.ScrollUnit="Item"
-   SelectionChanged="ComparisonGrid_SelectionChanged" SelectionMode="Extended" SelectionUnit="FullRow"
+   SelectionChanged="ComparisonGrid_SelectionChanged" CurrentCellChanged="ComparisonGrid_CurrentCellChanged" SelectionMode="Extended" SelectionUnit="FullRow"
    IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False"
    CanUserReorderColumns="False" EnableRowVirtualization="True" EnableColumnVirtualization="True"
    VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
@@ -71,48 +81,39 @@
    </Style></DataGrid.CellStyle>
    <DataGrid.ColumnHeaderStyle><Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="#353941"/><Setter Property="Foreground" Value="#9CDCFE"/><Setter Property="Padding" Value="8,5"/><Setter Property="BorderBrush" Value="#8A9BAE"/><Setter Property="BorderThickness" Value="0,0,2,0"/></Style></DataGrid.ColumnHeaderStyle>
    <DataGrid.Columns>
-    <DataGridTemplateColumn Header="버전1 · 원본" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+    <DataGridTemplateColumn Header="버전1 · 값 더블클릭 / F2" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
      <Border Background="{Binding LeftBackground}" BorderBrush="#8A9BAE" BorderThickness="0,0,2,0" Padding="6,0" MinHeight="86">
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="25"/><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
-        <views:SourceSelectionCheckBox IsChecked="{Binding LeftChecked, Mode=OneWay}" IsThreeState="True" Command="{Binding Owner.CheckLeftCommand}" CommandParameter="{Binding}" IsEnabled="{Binding HasLeft}" VerticalAlignment="Top" Margin="2,3,0,0" ToolTip="{Binding LeftSelectionHint}">
-        <CheckBox.Style><Style TargetType="CheckBox"><Setter Property="Visibility" Value="Visible"/><Style.Triggers><DataTrigger Binding="{Binding ShowChoices}" Value="False"><Setter Property="Visibility" Value="Hidden"/></DataTrigger></Style.Triggers></Style></CheckBox.Style>
-       </views:SourceSelectionCheckBox>
-       <views:DatTreeBranch Grid.Column="1"/>
-       <StackPanel Grid.Column="2" Margin="0,6"><TextBlock Text="{Binding LeftPath}" ToolTip="{Binding LeftPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
+      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+
+       <views:DatTreeBranch/>
+       <StackPanel Grid.Column="1" Margin="0,6"><TextBlock Text="{Binding LeftPath}" ToolTip="{Binding LeftPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
         <TextBlock Text="{Binding LeftType}" Foreground="{Binding TypeColor}" FontSize="11" TextTrimming="CharacterEllipsis"/>
         <WrapPanel><TextBlock Text="{Binding LeftDetail}" Foreground="#AAB6C5" FontSize="11" Margin="0,0,8,0"/><TextBlock Text="{Binding LeftSize}" Foreground="{Binding SizeColor}" FontWeight="SemiBold" FontSize="11"/></WrapPanel>
-        <TextBlock Text="{Binding LeftValue}" FontWeight="Bold" Foreground="{Binding ValueColor}" ToolTip="{Binding LeftValue}" TextTrimming="CharacterEllipsis"/>
+        <views:DatValueCell DataContext="{Binding LeftCell}" Foreground="{Binding ValueColor}"/>
        </StackPanel>
       </Grid>
      </Border>
     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-    <DataGridTemplateColumn Header="버전2 · 비교 원본" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+    <DataGridTemplateColumn Header="적용 방향" Width="110" MinWidth="100"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+     <StackPanel Margin="5,6" VerticalAlignment="Center">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+       <Button Content="←" Command="{Binding Owner.ApplyRightRowCommand}" CommandParameter="{Binding}" ToolTip="{Binding ApplyRightHint}" FontSize="18" Padding="8,0" Margin="0,0,4,0"/>
+       <Button Content="→" Command="{Binding Owner.ApplyLeftRowCommand}" CommandParameter="{Binding}" ToolTip="{Binding ApplyLeftHint}" FontSize="18" Padding="8,0"/>
+      </StackPanel>
+      <TextBlock Text="{Binding DifferenceText}" TextWrapping="Wrap" Foreground="{Binding StateColor}" FontSize="10" Margin="0,4,0,0" TextAlignment="Center"/>
+     </StackPanel>
+    </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+    <DataGridTemplateColumn Header="버전2 · 값 더블클릭 / F2" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
      <Border Background="{Binding RightBackground}" BorderBrush="#8A9BAE" BorderThickness="0,0,2,0" Padding="6,0" MinHeight="86">
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="25"/><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
-        <views:SourceSelectionCheckBox IsChecked="{Binding RightChecked, Mode=OneWay}" IsThreeState="True" Command="{Binding Owner.CheckRightCommand}" CommandParameter="{Binding}" IsEnabled="{Binding HasRight}" VerticalAlignment="Top" Margin="2,3,0,0" ToolTip="{Binding RightSelectionHint}">
-        <CheckBox.Style><Style TargetType="CheckBox"><Setter Property="Visibility" Value="Visible"/><Style.Triggers><DataTrigger Binding="{Binding ShowChoices}" Value="False"><Setter Property="Visibility" Value="Hidden"/></DataTrigger></Style.Triggers></Style></CheckBox.Style>
-       </views:SourceSelectionCheckBox>
-       <views:DatTreeBranch Grid.Column="1"/>
-       <StackPanel Grid.Column="2" Margin="0,6"><TextBlock Text="{Binding RightPath}" ToolTip="{Binding RightPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
+      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+
+       <views:DatTreeBranch/>
+       <StackPanel Grid.Column="1" Margin="0,6"><TextBlock Text="{Binding RightPath}" ToolTip="{Binding RightPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
         <TextBlock Text="{Binding RightType}" Foreground="{Binding TypeColor}" FontSize="11" TextTrimming="CharacterEllipsis"/>
         <WrapPanel><TextBlock Text="{Binding RightDetail}" Foreground="#AAB6C5" FontSize="11" Margin="0,0,8,0"/><TextBlock Text="{Binding RightSize}" Foreground="{Binding SizeColor}" FontWeight="SemiBold" FontSize="11"/></WrapPanel>
-        <TextBlock Text="{Binding RightValue}" FontWeight="Bold" Foreground="{Binding ValueColor}" ToolTip="{Binding RightValue}" TextTrimming="CharacterEllipsis"/>
+        <views:DatValueCell DataContext="{Binding RightCell}" Foreground="{Binding ValueColor}"/>
        </StackPanel>
       </Grid>
-     </Border>
-    </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-    <DataGridTemplateColumn Header="버전3 · 결과 (값 더블클릭 / F2)" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
-     <Border Background="{Binding TargetBackground}" Padding="6,0" MinHeight="86">
-     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="25"/><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
-     <views:DatTreeBranch Grid.Column="1"/>
-     <StackPanel Grid.Column="2" Margin="0,6"><TextBlock Text="{Binding TargetPath}" ToolTip="{Binding TargetPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
-      <TextBlock Text="{Binding TargetType}" Foreground="#B9C4D1" FontSize="11" TextTrimming="CharacterEllipsis"/>
-      <WrapPanel><TextBlock Text="{Binding TargetDetail}" Foreground="#AAB6C5" FontSize="11" Margin="0,0,8,0"/><TextBlock Text="{Binding TargetSize}" Foreground="#B9C4D1" FontWeight="SemiBold" FontSize="11"/></WrapPanel>
-      <views:DatValueCell/>
-      <TextBlock Text="{Binding DifferenceText}" Foreground="#E0DABF" FontSize="11" TextWrapping="Wrap"/>
-      <TextBlock Text="{Binding ResultState}" Foreground="{Binding StateColor}" FontSize="11" FontWeight="SemiBold"/>
-     </StackPanel>
-     </Grid>
      </Border>
     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
    </DataGrid.Columns>
@@ -132,35 +133,22 @@
     <DataGridTemplateColumn Header="값" Width="3*"><DataGridTemplateColumn.CellTemplate><DataTemplate><views:DatValueCell Margin="4,2"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
    </DataGrid.Columns>
   </DataGrid>
-  <Expander x:Name="AdvancedEditing" Grid.Row="3" Header="고급 편집" IsExpanded="{Binding AdvancedEditingExpanded}" Background="#282B30" Foreground="#DDD" BorderBrush="#444" BorderThickness="0,1,0,0" Padding="8" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
-   <StackPanel IsEnabled="{Binding HasTargetSelection}">
+  <Expander x:Name="AdvancedEditing" Grid.Row="3" Header="고급 편집" IsExpanded="{Binding AdvancedEditingExpanded}" Background="#282B30" Foreground="#DDD" Padding="8" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
+   <StackPanel>
     <WrapPanel Margin="0,0,0,5">
-     <TextBlock Text="선택한 결과 항목 / 그룹: " />
-     <Button Content="버전1 값 적용" Command="{Binding UseLeftCommand}" Margin="0,0,5,0"/>
-     <Button Content="버전2 값 적용" Command="{Binding UseRightCommand}" Margin="0,0,5,0"/>
-     <Button Content="결과에서 제거" Command="{Binding RemoveCommand}" Margin="0,0,5,0"/>
-     <Button Content="명시적으로 0 적용" Command="{Binding SetZeroCommand}" Margin="0,0,12,0"/>
-     <TextBlock Text="union 멤버: " />
-     <ComboBox ItemsSource="{Binding UnionBranches}" DisplayMemberPath="Path" SelectedItem="{Binding SelectedUnionBranch}" Width="180"/>
-     <Button Content="멤버 선택" Command="{Binding SelectBranchCommand}" Margin="4,0,0,0"/>
+     <TextBlock Text="편집 대상: "/>
+     <RadioButton Content="버전1" GroupName="ActiveVersion" IsChecked="{Binding ActiveLeft}" Foreground="#93CDFF" Margin="0,0,12,0"/>
+     <RadioButton Content="버전2" GroupName="ActiveVersion" IsChecked="{Binding ActiveRight}" Foreground="#98E5BB" Margin="0,0,16,0"/>
+     <Button Content="선택 항목 삭제" Command="{Binding RemoveCommand}" Margin="0,0,5,0"/>
+     <Button Content="0 적용" Command="{Binding SetZeroCommand}"/>
     </WrapPanel>
-    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
-     <DockPanel Grid.Column="0" Margin="0,0,8,0"><TextBlock Text="버전1 연결: " />
-      <Button DockPanel.Dock="Right" Content="연결" Command="{Binding MapLeftCommand}" Margin="4,0,0,0"/>
-      <ComboBox IsEditable="True" IsTextSearchEnabled="False" ItemsSource="{Binding LeftPaths}" Text="{Binding LeftMapping, UpdateSourceTrigger=PropertyChanged}" MaxDropDownHeight="240">
-       <ComboBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate></ComboBox.ItemsPanel>
-      </ComboBox>
-     </DockPanel>
-     <DockPanel Grid.Column="1"><TextBlock Text="버전2 연결: " />
-      <Button DockPanel.Dock="Right" Content="연결" Command="{Binding MapRightCommand}" Margin="4,0,0,0"/>
-      <ComboBox IsEditable="True" IsTextSearchEnabled="False" ItemsSource="{Binding RightPaths}" Text="{Binding RightMapping, UpdateSourceTrigger=PropertyChanged}" MaxDropDownHeight="240">
-       <ComboBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate></ComboBox.ItemsPanel>
-      </ComboBox>
-     </DockPanel>
-    </Grid>
-    <DockPanel Margin="0,5,0,0"><TextBlock Text="직접 입력: " />
-     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="적용" Command="{Binding ApplyValueCommand}" Margin="5,0"/><Button Content="입력 취소" Command="{Binding CancelEditCommand}"/></StackPanel>
-     <TextBox Text="{Binding EditorText, UpdateSourceTrigger=PropertyChanged}" ToolTip="정수 / 0x 정수 / 실수 / enum 이름 / 큰따옴표 문자열 / hex:바이트"/>
+    <DockPanel IsEnabled="{Binding HasTargetSelection}">
+     <TextBlock Text="{Binding ActiveVersionLabel}" Margin="0,0,8,0"/>
+     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+      <Button Content="적용" Command="{Binding ApplyValueCommand}" Margin="5,0"/>
+      <Button Content="입력 취소" Command="{Binding CancelEditCommand}"/>
+     </StackPanel>
+     <TextBox Text="{Binding EditorText, UpdateSourceTrigger=PropertyChanged}" ToolTip="정수 / 실수 / enum / 문자열 / hex:바이트"/>
     </DockPanel>
    </StackPanel>
   </Expander>

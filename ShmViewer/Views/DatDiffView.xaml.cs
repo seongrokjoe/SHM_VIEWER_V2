@@ -37,9 +37,20 @@ public partial class DatDiffView : UserControl
     }
     private void ComparisonGrid_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.F2 && ComparisonGrid.SelectedItem is IDatValueRow row)
-        { e.Handled = row.Owner.BeginCellEdit(row); return; }
+        if (e.Key == Key.F2 && ComparisonGrid.SelectedItem is DatRowViewModel row)
+        {
+            IDatValueRow cell = ComparisonGrid.CurrentCell.Column == ComparisonGrid.Columns[0] ? row.LeftCell :
+                ComparisonGrid.CurrentCell.Column == ComparisonGrid.Columns[2] ? row.RightCell : row;
+            e.Handled = row.Owner.BeginCellEdit(cell); return;
+        }
         e.Handled = HandleShortcut(e.Key, Keyboard.Modifiers, e.OriginalSource as DependencyObject);
+    }
+
+    private void ComparisonGrid_CurrentCellChanged(object? sender, EventArgs e)
+    {
+        if (_viewModel == null || _viewModel.IsRefreshingRows) return;
+        if (ComparisonGrid.CurrentCell.Column == ComparisonGrid.Columns[0]) _viewModel.ActiveLeft = true;
+        else if (ComparisonGrid.CurrentCell.Column == ComparisonGrid.Columns[2]) _viewModel.ActiveRight = true;
     }
     private void ViewerGrid_PreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -78,7 +89,7 @@ public partial class DatDiffView : UserControl
     };
     private void BindViewerColumns()
     {
-        foreach (var column in ComparisonGrid.Columns)
+        foreach (var column in ComparisonGrid.Columns.Where((_, index) => index != 1))
             BindingOperations.SetBinding(column, DataGridColumn.MinWidthProperty,
                 new Binding(nameof(DatDiffViewModel.ComparisonColumnMinWidth)) { Source = _viewModel });
         for (var i = 0; i < ViewerGrid.Columns.Count; i++)
@@ -119,5 +130,6 @@ public partial class DatDiffView : UserControl
         if (_viewModel == null) return;
         _viewModel.SelectedNodes.Clear();
         _viewModel.SelectedNodes.AddRange(ComparisonGrid.SelectedItems.OfType<DatRowViewModel>().Select(r => r.Node));
+        _viewModel.SelectionChanged();
     }
 }

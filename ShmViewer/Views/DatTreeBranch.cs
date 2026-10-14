@@ -16,7 +16,7 @@ public sealed class DatTreeBranch : Grid
         {
             Width = 20, Height = 22, VerticalAlignment = VerticalAlignment.Top,
             Background = Brushes.Transparent, Foreground = Brushes.LightGray, BorderThickness = new Thickness(0),
-            ToolTip = "하위 멤버 펼치기 / 접기 (세 버전 동기화)"
+            ToolTip = "하위 멤버 펼치기 / 접기 (양쪽 동기화)"
         };
         toggle.SetBinding(ContentControl.ContentProperty, new Binding(nameof(DatRowViewModel.ToggleText)));
         toggle.SetBinding(Button.CommandProperty, new Binding("Owner.ToggleCommand"));

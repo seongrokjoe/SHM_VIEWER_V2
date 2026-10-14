@@ -26,10 +26,10 @@ public sealed class DatLayoutTests
     {
         var schema = DatBinaryTests.Parse(header, pack: pack);
         var document = new DatDocument("", schema, new byte[schema.Root.Size]);
-        var session = new DatMergeSession(document, document);
-        Assert.Equal(schema.Root.Size, session.Result.Length);
-        Assert.Equal(schema.Root.Alignment, session.TargetSchema.Root.Alignment);
-        Assert.Equal(schema.Root.Signature, session.TargetSchema.Root.Signature);
+        var session = new DatDiffSession(document, document);
+        Assert.Equal(schema.Root.Size, session.Right.Current.Data.Length);
+        Assert.Equal(schema.Root.Alignment, session.Right.Current.Schema.Root.Alignment);
+        Assert.Equal(schema.Root.Signature, session.Right.Current.Schema.Root.Signature);
     }
 
     [Fact]
@@ -40,25 +40,25 @@ public sealed class DatLayoutTests
         Assert.Equal(2, schema.Root.Pack);
         Assert.Equal(1, schema.Root.Members.Single(m => m.Name == "items").Type.Element!.Element!.Pack);
         var document = new DatDocument("", schema, new byte[schema.Root.Size]);
-        var session = new DatMergeSession(document, document);
-        Assert.Equal(schema.Root.Signature, session.TargetSchema.Root.Signature);
+        var session = new DatDiffSession(document, document);
+        Assert.Equal(schema.Root.Signature, session.Right.Current.Schema.Root.Signature);
         Assert.DoesNotContain(session.Nodes, n => n.Key.StartsWith("(anonymous"));
-        session.Remove(new[] { DatMergeTests.Node(session, "low") });
+        session.Remove(DatSourceVersion.Version2, new[] { "low" });
         var expected = DatBinaryTests.Parse(File.ReadAllText(path).Replace("unsigned int low : 3;", ""), "CompositionLayout");
-        Assert.Equal(expected.Root.Size, session.Result.Length);
-        Assert.Equal(expected.Root.Members.Select(m => (m.Offset, m.BitOffset, m.BitWidth)), session.TargetSchema.Root.Members.Select(m => (m.Offset, m.BitOffset, m.BitWidth)));
+        Assert.Equal(expected.Root.Size, session.Right.Current.Data.Length);
+        Assert.Equal(expected.Root.Members.Select(m => (m.Offset, m.BitOffset, m.BitWidth)), session.Right.Current.Schema.Root.Members.Select(m => (m.Offset, m.BitOffset, m.BitWidth)));
     }
 
     [Fact]
     public void PartialPackedCompositionHasCompilerOffsetsAndGoldenBytes()
     {
         const string header = "#pragma pack(push, 2)\nstruct Root { char a; int b; short c; };\n#pragma pack(pop)";
-        var left = DatMergeTests.Document(header, ("a", "1"), ("b", "287454020"), ("c", "5"));
-        var right = DatMergeTests.Document(header, ("a", "1"), ("b", "2"), ("c", "5"));
-        var session = new DatMergeSession(left, right);
-        Assert.Equal(new byte[] { 1, 0, 5, 0 }, session.Result);
-        session.ApplySource(new[] { DatMergeTests.Node(session, "b") }, true);
-        Assert.Equal(Convert.FromHexString("0100443322110500"), session.Result);
-        Assert.Equal(left.Schema.Root.Signature, session.TargetSchema.Root.Signature);
+        var left = DatTestData.Document(header, ("a", "1"), ("b", "287454020"), ("c", "5"));
+        var right = DatTestData.Document(header, ("a", "1"), ("b", "2"), ("c", "5"));
+        var session = new DatDiffSession(left, right);
+        Assert.Equal(right.Bytes.ToArray(), session.Right.Current.Data);
+        session.Apply(new[] { "b" }, DatSourceVersion.Version1);
+        Assert.Equal(Convert.FromHexString("0100443322110500"), session.Right.Current.Data);
+        Assert.Equal(left.Schema.Root.Signature, session.Right.Current.Schema.Root.Signature);
     }
 }

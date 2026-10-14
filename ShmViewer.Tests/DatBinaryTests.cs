@@ -121,21 +121,10 @@ public sealed class DatBinaryTests
         Assert.Throws<InvalidDataException>(() => BinaryValueCodec.CopyConverted(BitConverter.GetBytes(0.1d), doubleField, new byte[4], single));
     }
     [Fact]
-    public void FileSizeMustExactlyMatchAndAtomicSaveProtectsInputs()
+    public void FileSizeMustExactlyMatch()
     {
         var schema = Parse("struct Root { int x; };");
         Assert.Throws<InvalidDataException>(() => new DatDocument("input.dat", schema, new byte[3]));
         Assert.Throws<InvalidDataException>(() => new DatDocument("input.dat", schema, new byte[5]));
-        var directory = Path.Combine(Path.GetTempPath(), "ShmViewer.Tests", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
-        try
-        {
-            var input = Path.Combine(directory, "input.dat"); File.WriteAllBytes(input, new byte[] { 1, 2, 3, 4 });
-            Assert.Throws<InvalidDataException>(() => DatDocument.SaveAtomic(input, new byte[4], input));
-            var output = Path.Combine(directory, "output.dat"); DatDocument.SaveAtomic(output, new byte[] { 4, 3, 2, 1 }, input);
-            Assert.Equal(new byte[] { 4, 3, 2, 1 }, DatDocument.Load(output, schema).Bytes.ToArray());
-            Assert.Equal(new byte[] { 1, 2, 3, 4 }, File.ReadAllBytes(input));
-            Assert.Empty(Directory.GetFiles(directory, "*.tmp"));
-        }
-        finally { Directory.Delete(directory, true); }
     }
 }
