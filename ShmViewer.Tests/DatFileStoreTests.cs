@@ -21,7 +21,7 @@ public sealed class DatFileStoreTests
         Assert.Equal(b.Data, File.ReadAllBytes(saved.BackupPath)); Assert.Equal(4, saved.PreviousSize); Assert.Equal(8, saved.Size);
         Assert.True(saved.StructureChanged); Assert.False(session.Right.IsDirty);
         Assert.Equal(session.Right.Current.Data, File.ReadAllBytes(b.FilePath));
-        var loaded = new DatFileStore().Load(b.FilePath, () => throw new Exception("Headers must not be read"));
+        var loaded = new DatFileStore().Load(b.FilePath, () => throw new Exception("Headers must not be read"), useSchemaFile: true);
         Assert.True(loaded.LoadedFromSchema);
         Assert.Equal(session.Right.Current.Schema.Root.Signature, loaded.Schema.Root.Signature);
         Assert.Equal(session.Right.Current.Data, loaded.Data);
@@ -43,7 +43,7 @@ public sealed class DatFileStoreTests
         Assert.NotEqual(first.BackupPath, second.BackupPath);
         Assert.Equal(bytes, File.ReadAllBytes(second.BackupPath));
         Assert.Equal(metadata, File.ReadAllBytes(second.BackupSchemaPath!));
-        var backup = store.Load(second.BackupPath, () => throw new Exception());
+        var backup = store.Load(second.BackupPath, () => throw new Exception(), useSchemaFile: true);
         Assert.Equal(bytes, backup.Data);
         Assert.Equal(a.Data, File.ReadAllBytes(first.BackupPath));
     }
@@ -105,9 +105,9 @@ public sealed class DatFileStoreTests
         if (kind == "array") json["Root"]!["Members"]![0]!["Type"]!["Count"] = int.MaxValue;
         File.WriteAllText(DatSchemaFile.PathFor(doc.FilePath), kind == "json" ? "invalid json" : json.ToJsonString());
         var parsed = false;
-        Assert.Throws<InvalidDataException>(() => new DatFileStore().Load(doc.FilePath, () => { parsed = true; return doc.Schema; }));
+        Assert.Throws<InvalidDataException>(() => new DatFileStore().Load(doc.FilePath, () => { parsed = true; return doc.Schema; }, useSchemaFile: true));
         Assert.False(parsed);
-        var forced = new DatFileStore().Load(doc.FilePath, () => doc.Schema, useHeader: true);
+        var forced = new DatFileStore().Load(doc.FilePath, () => doc.Schema);
         Assert.False(forced.LoadedFromSchema);
     }
 
@@ -136,7 +136,7 @@ public sealed class DatFileStoreTests
         Assert.Contains("크기는 같지만 구조가 변경", changed.Message("버전2"));
         session.SetValue(Version2, "x", "2.5", "ASCII"); var value = session.Save(Version2);
         Assert.False(value.StructureChanged); Assert.DoesNotContain("매핑을 사용할 수 없습니다", value.Message("버전2"));
-        Assert.Contains("자동으로 읽습니다", value.Message("버전2"));
+        Assert.Contains("자동 구조 파일 사용", value.Message("버전2"));
     }
 
     [Fact]
@@ -172,7 +172,7 @@ public sealed class DatFileStoreTests
         var saved = session.Save(Version2);
         Assert.Equal(source.Data, File.ReadAllBytes(saved.DatPath));
         Assert.Equal(target.Data, File.ReadAllBytes(saved.BackupPath));
-        Assert.Equal(source.Data, new DatFileStore().Load(saved.DatPath, () => throw new Exception()).Data);
+        Assert.Equal(source.Data, new DatFileStore().Load(saved.DatPath, () => throw new Exception(), useSchemaFile: true).Data);
         Assert.Equal(target.Data.Length, saved.PreviousSize); Assert.Equal(source.Data.Length, saved.Size);
         Assert.Contains("크기가 변경", saved.Message("버전2"));
     }

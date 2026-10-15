@@ -51,8 +51,8 @@
    <Button Content="다음 차이 ▶" Command="{Binding NextDifferenceCommand}" Margin="0,0,12,0"/>
    </StackPanel>
    <TextBlock Text="문자 인코딩 " />
-   <ComboBox ItemsSource="{Binding Encodings}" SelectedItem="{Binding EncodingName}" Width="85" Margin="0,0,8,0"/>
-   <CheckBox Content="HEX" IsChecked="{Binding ShowHex}" Foreground="#DDD" VerticalAlignment="Center" Margin="0,0,12,0"/>
+   <ComboBox IsEnabled="{Binding CanInteract}" ItemsSource="{Binding Encodings}" SelectedItem="{Binding EncodingName}" Width="85" Margin="0,0,8,0"/>
+   <CheckBox IsEnabled="{Binding CanInteract}" Content="HEX" IsChecked="{Binding ShowHex}" Foreground="#DDD" VerticalAlignment="Center" Margin="0,0,12,0"/>
    <StackPanel Orientation="Horizontal">
    <Button Content="실행 취소" Command="{Binding UndoCommand}" Margin="0,0,4,0"/>
    <Button Content="다시 실행" Command="{Binding RedoCommand}" Margin="0,0,12,0"/>
@@ -64,7 +64,7 @@
    </StackPanel>
    <Button Content="컬럼 표시 ▾" Click="Columns_Click" Margin="8,0,0,0" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
   </WrapPanel>
-  <DataGrid x:Name="ComparisonGrid" Grid.Row="2" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+  <DataGrid x:Name="ComparisonGrid" RowHeight="96" LoadingRow="ComparisonGrid_LoadingRow" UnloadingRow="ComparisonGrid_UnloadingRow" Grid.Row="2" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
    Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}"
    PreviewKeyDown="ComparisonGrid_PreviewKeyDown" PreviewMouseWheel="Grid_PreviewMouseWheel" VirtualizingPanel.ScrollUnit="Item"
    SelectionChanged="ComparisonGrid_SelectionChanged" CurrentCellChanged="ComparisonGrid_CurrentCellChanged" SelectionMode="Extended" SelectionUnit="FullRow"
@@ -72,7 +72,7 @@
    CanUserReorderColumns="False" EnableRowVirtualization="True" EnableColumnVirtualization="True"
    VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
    Background="#1E2023" Foreground="#DDD" BorderBrush="#444" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#3A3D42"
-   HeadersVisibility="Column" IsEnabled="{Binding IsBusy, Converter={x:Static local:InverseBoolConverter.Instance}}">
+   HeadersVisibility="Column">
    <DataGrid.RowStyle><Style TargetType="DataGridRow">
     <Setter Property="Background" Value="#242A32"/>
     <Setter Property="BorderBrush" Value="{Binding StateColor}"/><Setter Property="BorderThickness" Value="3,0,0,0"/>
@@ -104,7 +104,7 @@
        <Button Content="←" Command="{Binding Owner.ApplyRightRowCommand}" CommandParameter="{Binding}" ToolTip="{Binding ApplyRightHint}" FontSize="18" Padding="8,0" Margin="0,0,4,0"/>
        <Button Content="→" Command="{Binding Owner.ApplyLeftRowCommand}" CommandParameter="{Binding}" ToolTip="{Binding ApplyLeftHint}" FontSize="18" Padding="8,0"/>
       </StackPanel>
-      <TextBlock Text="{Binding DifferenceText}" TextWrapping="Wrap" Foreground="{Binding StateColor}" FontSize="10" Margin="0,4,0,0" TextAlignment="Center"/>
+      <TextBlock Text="{Binding DifferenceText}" ToolTip="{Binding DifferenceText}" MaxHeight="40" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Foreground="{Binding StateColor}" FontSize="10" Margin="0,4,0,0" TextAlignment="Center"/>
      </StackPanel>
     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
     <DataGridTemplateColumn Header="버전2 · 값 더블클릭 / F2" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
@@ -157,6 +157,7 @@
    </StackPanel>
   </Expander>
   <StackPanel Grid.Row="4">
+   <ProgressBar Height="3" IsIndeterminate="True" Visibility="{Binding IsBusy, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
    <TextBlock Text="{Binding EditorError}" Foreground="#FF8888" TextWrapping="Wrap" Margin="8,0"/>
    <DockPanel Margin="8,4" Visibility="{Binding HasCellEdit, Converter={x:Static local:BoolToVisConverter.Instance}}">
     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="셀 입력 적용" Command="{Binding ApplyCellEditCommand}"/><Button Content="입력 취소" Command="{Binding CancelCellEditCommand}" Margin="5,0"/></StackPanel>

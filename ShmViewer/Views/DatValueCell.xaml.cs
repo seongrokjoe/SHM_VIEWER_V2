@@ -13,19 +13,19 @@ public partial class DatValueCell : UserControl
     public TextAlignment ValueTextAlignment { get => (TextAlignment)GetValue(ValueTextAlignmentProperty); set => SetValue(ValueTextAlignmentProperty, value); }
     public DatValueCell() => InitializeComponent();
 
-    private void Value_DoubleClick(object sender, MouseButtonEventArgs e)
+    private async void Value_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (e.ChangedButton == MouseButton.Left && DataContext is IDatValueRow row && row.Owner.BeginCellEdit(row))
+        if (e.ChangedButton == MouseButton.Left && DataContext is IDatValueRow row && await row.Owner.BeginCellEditAsync(row))
         { FocusEditor(); e.Handled = true; }
     }
 
-    private void Value_KeyDown(object sender, KeyEventArgs e)
+    private async void Value_KeyDown(object sender, KeyEventArgs e)
     {
         if (DataContext is not IDatValueRow row) return;
-        if (e.Key == Key.F2 && row.Owner.BeginCellEdit(row)) { FocusEditor(); e.Handled = true; }
+        if (e.Key == Key.F2 && await row.Owner.BeginCellEditAsync(row)) { FocusEditor(); e.Handled = true; }
         else if (Equals(row.Owner.CellEditTarget, row.EditTarget))
         {
-            if (e.Key == Key.Enter) { row.Owner.CommitCellEdit(); e.Handled = true; }
+            if (e.Key == Key.Enter) { e.Handled = true; await row.Owner.CommitCellEditAsync(); }
             else if (e.Key == Key.Escape) { row.Owner.CancelCellEditCommand.Execute(null); e.Handled = true; }
         }
     }
@@ -40,11 +40,14 @@ public partial class DatValueCell : UserControl
         if (ValueEditor.IsVisible) { ValueEditor.Focus(); ValueEditor.SelectAll(); }
     }));
 
-    private void Editor_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    private async void Editor_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         // Recycled rows can lose focus while being detached; their draft belongs to the view-model.
         if (e.NewFocus != null && IsLoaded && IsVisible && DataContext is IDatValueRow row &&
             !row.Owner.IsRefreshingRows && Equals(row.Owner.CellEditTarget, row.EditTarget))
-            row.Owner.CommitCellEdit();
+        {
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            if (Equals(row.Owner.CellEditTarget, row.EditTarget) && row.Owner.CanEditValues) await row.Owner.CommitCellEditAsync();
+        }
     }
 }

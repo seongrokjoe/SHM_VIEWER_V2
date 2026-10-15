@@ -263,6 +263,8 @@
                                  IsChecked="{Binding NewRefreshMode, Converter={x:Static local:EnumToBoolConverter.Instance}, ConverterParameter=Manual}"/>
                     <Button Content="Load" Style="{StaticResource DarkBtn}" Margin="20,0,6,0"
                             Command="{Binding LoadShmTabCommand}"/>
+                    <Button x:Name="LoadShmSchemaButton" Content="구조 파일 열기…" Style="{StaticResource DarkBtn}"
+                            Command="{Binding LoadShmSchemaCommand}"/>
                 </StackPanel>
             </StackPanel>
         </Border>
@@ -296,8 +298,9 @@
                         <!-- Status bar -->
                         <Border Grid.Row="0" Background="#252526" Padding="10,5"
                                 BorderBrush="#444" BorderThickness="0,0,0,1">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding StatusText}" FontSize="12"
+                            <StackPanel>
+                            <WrapPanel>
+                                <TextBlock Text="{Binding StatusText}" ToolTip="{Binding StatusText}" MaxWidth="560" TextTrimming="CharacterEllipsis" FontSize="12"
                                            Foreground="{Binding IsStatusError, Converter={x:Static local:BoolToErrorColorConverter.Instance}}"/>
                                 <TextBlock Text="  |  마지막 갱신: " Foreground="#666" FontSize="11" Margin="10,0,0,0"/>
                                 <TextBlock Text="{Binding LastRefreshTime}" Foreground="#666" FontSize="11"/>
@@ -315,6 +318,9 @@
                                 <Button Content="자세히 보기" Style="{StaticResource DarkBtn}" Margin="10,0,0,0"
                                         Command="{Binding ShowUnresolvedCommand}"
                                         Visibility="{Binding HasUnresolvedTypes, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+                                <Button Content="구조 파일 저장…" Command="{Binding SaveSchemaCommand}" Style="{StaticResource DarkBtn}" Margin="10,0,0,0"/>
+                            </WrapPanel>
+                            <TextBlock Text="{Binding StructureFilePath}" ToolTip="{Binding StructureFilePath}" TextTrimming="CharacterEllipsis" Foreground="#888" FontSize="11"/>
                             </StackPanel>
                         </Border>
 

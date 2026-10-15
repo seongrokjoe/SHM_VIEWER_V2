@@ -31,6 +31,9 @@ public sealed partial class ViewerUiTests
             window.Show(); ((TabControl)window.FindName("WorkspaceTabs")).SelectedIndex = 1;
             await diff.DiffCommand.ExecuteAsync(null); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             var view = Find<DatDiffView>(window)!; var grid = (DataGrid)view.FindName("ComparisonGrid");
+            await diff.DiffCommand.ExecuteAsync(null);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.Equal(diff.Rows.Count, grid.Items.Count);
             Assert.Equal(3, grid.Columns.Count); Assert.Equal("적용 방향", grid.Columns[1].Header);
             Assert.True(grid.Columns[1].ActualWidth < 150); Assert.True(grid.ActualHeight > 150);
             Assert.DoesNotContain(AllVisuals<TextBlock>(view), text => text.Text.Contains("버전3"));
@@ -40,10 +43,11 @@ public sealed partial class ViewerUiTests
             grid.SelectedItem = row; grid.ScrollIntoView(row); grid.UpdateLayout();
             var container = (DataGridRow)grid.ItemContainerGenerator.ContainerFromItem(row);
             var button = AllVisuals<Button>(container).Single(b => ReferenceEquals(b.Command, diff.ApplyLeftRowCommand));
-            button.Command.Execute(button.CommandParameter);
+            await ((CommunityToolkit.Mvvm.Input.IAsyncRelayCommand)button.Command).ExecuteAsync(button.CommandParameter);
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             Assert.Equal("10", diff.Rows.Single(r => r.Node.Path == "choice").RightValue);
             Assert.True(view.HandleShortcut(Key.Z, ModifierKeys.Control, grid));
+            await diff.UndoCommand.ExecutionTask!;
             row = diff.Rows.Single(r => r.Node.Path == "choice"); grid.ScrollIntoView(row); grid.UpdateLayout();
             container = (DataGridRow)grid.ItemContainerGenerator.ContainerFromItem(row);
             Assert.Equal(2, AllVisuals<DatTreeBranch>(container).Count());
@@ -55,6 +59,7 @@ public sealed partial class ViewerUiTests
             editor.Text = "99"; editor.GetBindingExpression(TextBox.TextProperty)!.UpdateSource();
             editor.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(editor), 0, Key.Enter) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            await diff.CommitCellEditAsync();
             Assert.Equal("99", diff.Rows.Single(r => r.Node.Path == "choice").RightValue);
             Render(window, "dat-bidirectional.png");
             window.Width = window.MinWidth; window.Height = window.MinHeight;
@@ -84,6 +89,7 @@ public sealed partial class ViewerUiTests
     {
         using var setup = new DatWorkspaceTests.Inputs();
         using var vm = new MainViewModel(new MemoryStore(), _ => true);
+        vm.ShowSctcNotice = () => { };
         var window = new MainWindow(vm) { Width = 1440, Height = 900, Left = -12000, Top = -12000, ShowActivated = false };
         try
         {

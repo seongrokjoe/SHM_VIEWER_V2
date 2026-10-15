@@ -43,7 +43,7 @@ public sealed partial class ViewerUiTests
             var scroll = AllVisuals<ScrollViewer>(grid).First();
             var offset = scroll.VerticalOffset;
             Assert.True(offset > 0); Assert.Equal(2, diff.SelectedNodes.Count);
-            diff.UseLeftCommand.Execute(null);
+            await diff.UseLeftCommand.ExecuteAsync(null);
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle); window.UpdateLayout();
             Assert.Equal(offset, scroll.VerticalOffset); Assert.Equal(2, grid.SelectedItems.Count);
             Assert.Equal(2, diff.SelectedNodes.Count); Assert.Contains(a, grid.SelectedItems.OfType<DatRowViewModel>());

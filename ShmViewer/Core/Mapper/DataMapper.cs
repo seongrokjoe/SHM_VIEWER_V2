@@ -46,7 +46,7 @@ public class DataMapper
         }
     }
 
-    // 수정 1: SHM 연결 없이 빈 구조 트리 생성 (모든 값 "-")
+    // SHM 연결 없이 0으로 초기화한 버퍼로 구조 트리를 생성한다.
     public TreeNodeViewModel MapEmpty(TypeInfo rootType)
     {
         var data = new byte[rootType.TotalSize];

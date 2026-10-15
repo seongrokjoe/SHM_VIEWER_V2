@@ -6,7 +6,7 @@ namespace ShmViewer.Core;
 public sealed record PresetHeaderGroup(string Directory, string[] Files);
 public enum SctcDataKind { Run, Init }
 public sealed record SctcDatPreset(string Kind, string[] Headers, string DatPath, string StructName);
-public sealed record SctcPreset(PresetHeaderGroup[] HeaderGroups, ShmTabEntry[] Tabs, SctcDatPreset[] DatPresets)
+public sealed record SctcPreset(PresetHeaderGroup[] HeaderGroups, ShmTabEntry[] Tabs, SctcDatPreset[] DatPresets, string ApplicationDirectory)
 {
     public SctcDatPreset ForData(SctcDataKind kind) => DatPresets.Single(p => p.Kind == kind.ToString());
     public static SctcPreset Load()

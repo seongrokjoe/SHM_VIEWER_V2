@@ -40,7 +40,10 @@ public sealed class DatTreeBranch : Grid
         if (_observedRow != null) _observedRow.PropertyChanged += RowChanged;
         Refresh();
     }
-    private void RowChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
+    private void RowChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName is nameof(DatRowViewModel.TreeBranches) or nameof(DatRowViewModel.HasVisibleChildren) or nameof(DatRowViewModel.ToggleText)) Refresh();
+    }
     private void Refresh()
     {
         if (_toggle == null) return;
@@ -49,7 +52,7 @@ public sealed class DatTreeBranch : Grid
         Width = indent + 22;
         _toggle.HorizontalAlignment = IsMirrored ? HorizontalAlignment.Right : HorizontalAlignment.Left;
         _toggle.Margin = IsMirrored ? new Thickness(0, 4, indent, 0) : new Thickness(indent, 4, 0, 0);
-        _toggle.Content = row?.Node.IsExpanded == true ? "▼" : IsMirrored ? "◀" : "▶";
+        _toggle.Content = row != null && row.Owner.IsExpanded(row.Node.Path) ? "▼" : IsMirrored ? "◀" : "▶";
         _toggle.IsEnabled = row?.HasVisibleChildren == true;
         _toggle.Visibility = row?.HasVisibleChildren == true ? Visibility.Visible : Visibility.Hidden;
         _guides.Row = row;
@@ -79,7 +82,7 @@ public sealed class DatTreeBranch : Grid
                 if (last) drawingContext.DrawLine(GuidePen, new Point(X(x), junction),
                     new Point(X(Row.HasVisibleChildren ? (i + 1) * 14 : ActualWidth - 2), junction));
             }
-            if (Row.Node.IsExpanded && Row.HasVisibleChildren)
+            if (Row.Owner.IsExpanded(Row.Node.Path) && Row.HasVisibleChildren)
             {
                 var x = Row.Node.Depth * 14 + 10.5;
                 drawingContext.DrawLine(GuidePen, new Point(X(x), junction + 9), new Point(X(x), ActualHeight));

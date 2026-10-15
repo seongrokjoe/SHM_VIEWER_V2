@@ -15,12 +15,19 @@
     <TextBlock Text="위에서부터 include" Foreground="#999" FontSize="10"/>
    </DockPanel>
    <ListBox x:Name="HeaderList" ItemsSource="{Binding Headers}" SelectionMode="Extended" SelectionChanged="Headers_SelectionChanged" PreviewKeyDown="Headers_KeyDown" Height="66" Background="#1E2023" BorderBrush="#444">
+    <ListBox.Template><ControlTemplate TargetType="{x:Type ListBox}">
+     <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+      <ScrollViewer x:Name="PART_ScrollViewer" Focusable="False" CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+       <ItemsPresenter/>
+      </ScrollViewer>
+     </Border>
+    </ControlTemplate></ListBox.Template>
     <ListBox.ItemTemplate><DataTemplate>
-     <TextBlock ToolTip="{Binding Path}">
+     <TextBlock ToolTip="{Binding FullPath}">
       <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Foreground" Value="#D4D4D4"/><Style.Triggers>
        <DataTrigger Binding="{Binding IsAvailable}" Value="False"><Setter Property="Foreground" Value="#FF7777"/></DataTrigger>
       </Style.Triggers></Style></TextBlock.Style>
-      <Run Text="{Binding Name, Mode=OneWay}"/><Run Text=" "/><Run Text="{Binding Error, Mode=OneWay}"/>
+      <Run Text="{Binding FullPath, Mode=OneWay}"/><Run Text=" "/><Run Text="{Binding Error, Mode=OneWay}"/>
      </TextBlock>
     </DataTemplate></ListBox.ItemTemplate>
    </ListBox>
@@ -31,7 +38,7 @@
    <DockPanel Margin="0,5,0,0">
     <TextBlock Text="Struct " Width="52"/><TextBox Text="{Binding StructName, UpdateSourceTrigger=LostFocus}"/>
    </DockPanel>
-   <CheckBox Content="헤더 사용 (자동 구조 파일 대신)" IsChecked="{Binding UseHeader}" Foreground="#DDD" Margin="0,5,0,0" ToolTip="기본: DAT 옆의 .dat.schema.json을 자동으로 읽습니다. 구조 파일이 없으면 헤더와 Struct를 사용합니다."/>
+   <CheckBox Content="자동 구조 파일 사용" IsChecked="{Binding UseSchemaFile}" Foreground="#DDD" Margin="0,5,0,0" ToolTip="기본: 헤더와 Struct를 사용합니다. 체크하면 DAT 옆의 .dat.schema.json만 사용하며, 구조 파일이 없거나 DAT와 일치하지 않으면 로드에 실패합니다."/>
    <Expander x:Name="OptionsExpander" Header="파싱 옵션 · Windows x64" Foreground="#BBBBBB" Margin="0,5,0,0">
     <StackPanel Margin="0,4,0,0">
      <DockPanel><TextBlock Text="기본 Pack " Width="82"/><TextBox Text="{Binding Pack}" Width="45" HorizontalAlignment="Left"/></DockPanel>

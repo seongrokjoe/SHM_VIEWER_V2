@@ -30,6 +30,10 @@ public partial class DatDiffView : UserControl
             BindViewerColumns();
         };
     }
+    private void ComparisonGrid_LoadingRow(object sender, DataGridRowEventArgs e)
+    { if (e.Row.Item is DatRowViewModel row) { row.Owner.RealizeRow(row); row.Refresh(); } }
+    private void ComparisonGrid_UnloadingRow(object sender, DataGridRowEventArgs e)
+    { if (e.Row.Item is DatRowViewModel row) row.Owner.UnrealizeRow(row); }
     private void ScrollTo(DatRowViewModel row) => ComparisonGrid.ScrollIntoView(row);
     private string? _scrollAnchor;
     private double _verticalOffset, _horizontalOffset;
@@ -46,11 +50,11 @@ public partial class DatDiffView : UserControl
         var selected = _viewModel.SelectedNodes.Select(n => n.Path).ToHashSet(StringComparer.Ordinal);
         foreach (var row in ComparisonGrid.SelectedItems.OfType<DatRowViewModel>().ToArray())
             if (!selected.Contains(row.Node.Path) && row != _viewModel.SelectedRow) ComparisonGrid.SelectedItems.Remove(row);
-        foreach (var row in _viewModel.Rows.Where(r => selected.Contains(r.Node.Path)))
-            if (!ComparisonGrid.SelectedItems.Contains(row)) ComparisonGrid.SelectedItems.Add(row);
-        ComparisonGrid.UpdateLayout();
+        var existing = ComparisonGrid.SelectedItems.OfType<DatRowViewModel>().ToHashSet();
+        foreach (var path in selected)
+            if (_viewModel.FindVisibleRow(path) is { } row && existing.Add(row)) ComparisonGrid.SelectedItems.Add(row);
         var scroll = FindVisual<ScrollViewer>(ComparisonGrid);
-        var anchor = _viewModel.Rows.FirstOrDefault(r => r.Node.Path == _scrollAnchor);
+        var anchor = _scrollAnchor == null ? null : _viewModel.FindVisibleRow(_scrollAnchor);
         scroll?.ScrollToVerticalOffset(anchor == null ? _verticalOffset : _viewModel.Rows.IndexOf(anchor));
         scroll?.ScrollToHorizontalOffset(_horizontalOffset);
     }
@@ -66,13 +70,13 @@ public partial class DatDiffView : UserControl
         }
         ResetScroll(ComparisonGrid); ResetScroll(ViewerGrid);
     }
-    private void ComparisonGrid_PreviewKeyDown(object sender, KeyEventArgs e)
+    private async void ComparisonGrid_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.F2 && ComparisonGrid.SelectedItem is DatRowViewModel row)
         {
             IDatValueRow cell = ComparisonGrid.CurrentCell.Column == ComparisonGrid.Columns[0] ? row.LeftCell :
                 ComparisonGrid.CurrentCell.Column == ComparisonGrid.Columns[2] ? row.RightCell : row;
-            e.Handled = row.Owner.BeginCellEdit(cell); return;
+            e.Handled = await row.Owner.BeginCellEditAsync(cell); return;
         }
         e.Handled = HandleShortcut(e.Key, Keyboard.Modifiers, e.OriginalSource as DependencyObject);
     }
@@ -83,11 +87,11 @@ public partial class DatDiffView : UserControl
         if (ComparisonGrid.CurrentCell.Column == ComparisonGrid.Columns[0]) _viewModel.ActiveLeft = true;
         else if (ComparisonGrid.CurrentCell.Column == ComparisonGrid.Columns[2]) _viewModel.ActiveRight = true;
     }
-    private void ViewerGrid_PreviewKeyDown(object sender, KeyEventArgs e)
+    private async void ViewerGrid_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (_viewModel == null) return;
         if (e.Key == Key.F2 && ViewerGrid.SelectedItem is IDatValueRow row)
-            e.Handled = row.Owner.BeginCellEdit(row);
+            e.Handled = await row.Owner.BeginCellEditAsync(row);
         else e.Handled = HandleShortcut(e.Key, Keyboard.Modifiers, e.OriginalSource as DependencyObject);
     }
 

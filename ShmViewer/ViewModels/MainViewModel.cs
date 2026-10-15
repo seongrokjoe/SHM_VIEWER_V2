@@ -22,12 +22,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private bool _changingSettings;
     private List<string> _lastUnresolvedTypes = new();
     public DatDiffViewModel DatDiff { get; }
+    public Action ShowSctcNotice { get; set; } = UserNotice.ShowSctcRequirement;
+    public Action<string, string> ShowErrorNotice { get; set; } = UserNotice.ShowError;
     public Task Initialization { get; private set; } = Task.CompletedTask;
     public ObservableCollection<HeaderFileEntry> HeaderFiles { get; } = new();
     public IEnumerable<HeaderFileGroup> HeaderGroups => HeaderFiles.GroupBy(f => f.Directory, StringComparer.OrdinalIgnoreCase)
         .Select(g => new HeaderFileGroup(g.Key, g));
     public ObservableCollection<ShmTabViewModel> Tabs { get; } = new();
-    public bool CanRefreshHeaders => !Tabs.Any(t => t.IsRunning || t.IsBusy) && !IsParsing;
+    public bool CanRefreshHeaders => !Tabs.Any(t => t.IsRunning || t.IsBusy) && !IsParsing && !IsLoadingSchema;
     [ObservableProperty] private bool _isParsing;
     [ObservableProperty] private bool _useDefaultSctcClean;
     [ObservableProperty] private ShmTabViewModel? _selectedTab;
@@ -66,10 +68,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var saved = _settings.Load();
             if (saved.UseDefaultSctcClean)
             {
-                var obsoleteHeader = Path.Combine(SctcPreset.Load().HeaderGroups[0].Directory, "jobinfo.h");
-                var changed = saved.Headers.RemoveAll(p => string.Equals(p, obsoleteHeader, StringComparison.OrdinalIgnoreCase));
-                changed += saved.Tabs.RemoveAll(t => t.ShmName == "OBJECT_INFO_MEMORY" && t.StructName == "STJOBINFO");
-                if (changed > 0) _settings.Save(saved);
+                saved = new(false, new(), new());
+                _settings.Save(saved);
             }
             UseDefaultSctcClean = saved.UseDefaultSctcClean;
             foreach (var path in saved.Headers.Distinct(StringComparer.OrdinalIgnoreCase)) HeaderFiles.Add(new(path));
@@ -86,6 +86,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
     private void NotifyHeaderCommands()
     {
+        OnPropertyChanged(nameof(CanLoadShmSchema));
+        LoadShmSchemaCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(CanRefreshHeaders));
         RefreshHeadersCommand.NotifyCanExecuteChanged();
         AddHeaderFilesCommand.NotifyCanExecuteChanged();
@@ -118,6 +120,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             UseDefaultSctcClean = enabled;
             if (enabled)
             {
+                ShowSctcNotice();
                 var preset = SctcPreset.Load();
                 foreach (var group in preset.HeaderGroups)
                     foreach (var file in group.Files) HeaderFiles.Add(new(Path.Combine(group.Directory, file)));
@@ -146,6 +149,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (Tabs.Any(t => t.ShmName == entry.ShmName && t.StructName == entry.StructName)) return;
         var tab = new ShmTabViewModel
         {
+            ShowErrorNotice = (title, message) => ShowErrorNotice(title, message),
             ShmName = entry.ShmName, StructName = entry.StructName, TabTitle = entry.ShmName,
             RefreshMode = Enum.TryParse<RefreshMode>(entry.RefreshMode, out var mode) ? mode : RefreshMode.Ms500,
             IsStatusError = false, StatusText = "헤더 분석 준비 중..."
@@ -198,15 +202,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
         foreach (var file in HeaderFiles) file.Check();
         var paths = HeaderFiles.Where(f => f.IsAvailable).Select(f => f.Path).ToArray();
         _currentDb = null;
-        foreach (var tab in Tabs) tab.SetUnavailable("헤더 / 구조체 확인 대기");
+        var headerTabs = Tabs.Where(t => t.Source == ShmTabSource.Headers).ToArray();
+        foreach (var tab in headerTabs) tab.SetUnavailable("헤더 / 구조체 확인 대기");
         if (paths.Length == 0)
         {
             ParserStatus = HeaderFiles.Count == 0 ? "헤더 파일을 업로드하세요." : "읽을 수 있는 헤더가 없습니다. 빨간색 항목을 확인하세요.";
-            foreach (var tab in Tabs) tab.SetUnavailable(ParserStatus);
+            foreach (var tab in headerTabs) tab.SetUnavailable(ParserStatus);
             _lastUnresolvedTypes.Clear(); HasLastUnresolved = false; return;
         }
         IsParsing = true; ParserStatus = "파싱 중...";
-        foreach (var tab in Tabs) tab.BeginHeaderLoad();
+        foreach (var tab in headerTabs) tab.BeginHeaderLoad();
         try
         {
             var result = await Task.Run(() => new HeaderParserService().Parse(paths));
@@ -214,7 +219,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             _currentDb = result.Database;
             _lastUnresolvedTypes = result.UnresolvedTypes;
             HasLastUnresolved = _lastUnresolvedTypes.Count > 0;
-            foreach (var tab in Tabs.ToArray())
+            foreach (var tab in headerTabs)
             {
                 if (_disposed || version != _parseVersion) return;
                 if (!Tabs.Contains(tab)) continue;
@@ -231,7 +236,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (version == _parseVersion && !_disposed)
             {
                 ParserStatus = "파싱 오류: " + ex.Message;
-                foreach (var tab in Tabs) tab.SetUnavailable(ParserStatus);
+                foreach (var tab in headerTabs) tab.SetUnavailable(ParserStatus);
             }
         }
         finally { if (version == _parseVersion && !_disposed) IsParsing = false; }
@@ -259,7 +264,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         if (_changingSettings || _disposed) return;
         try { _settings.Save(new(UseDefaultSctcClean, HeaderFiles.Select(f => f.Path).ToList(),
-            Tabs.Select(t => new ShmTabEntry(t.ShmName, t.StructName, t.RefreshMode.ToString())).ToList())); SettingsError = string.Empty; }
+            Tabs.Where(t => t.Source == ShmTabSource.Headers).Select(t => new ShmTabEntry(t.ShmName, t.StructName, t.RefreshMode.ToString())).ToList())); SettingsError = string.Empty; }
         catch (Exception ex) { SettingsError = "설정 저장 실패: " + ex.Message; }
     }
     public void Dispose()

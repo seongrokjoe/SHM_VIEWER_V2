@@ -7,30 +7,32 @@ namespace ShmViewer.ViewModels;
 public sealed class DatRowViewModel : ObservableObject, IDatValueRow
 {
     public DatDiffViewModel Owner { get; }
-    public DatDiffNode Node { get; private set; }
+    private readonly DatDiffNode _absent;
+    internal string Path { get; }
+    public DatDiffNode Node => Owner.DisplayNode(Path, _absent);
     public DatSideCell LeftCell { get; }
     public DatSideCell RightCell { get; }
     public DatRowViewModel(DatDiffViewModel owner, DatDiffNode node)
-    { Owner = owner; Node = node; LeftCell = new(this, DatSourceVersion.Version1); RightCell = new(this, DatSourceVersion.Version2); }
+    { Owner = owner; Path = node.Path; _absent = new() { Path = node.Path, Key = node.Key }; LeftCell = new(this, DatSourceVersion.Version1); RightCell = new(this, DatSourceVersion.Version2); }
     private DatSideCell ActiveCell => Owner.ActiveLeft ? LeftCell : RightCell;
     public object EditTarget => ActiveCell.EditTarget;
     public bool CanEditValue => ActiveCell.CanEditValue;
     public string EditableValue => ActiveCell.EditableValue;
-    public bool[] TreeBranches { get; internal set; } = Array.Empty<bool>();
-    public bool HasVisibleChildren { get; internal set; }
+    public bool[] TreeBranches => Owner.Presentation(Node.Path)?.Branches ?? Array.Empty<bool>();
+    public bool HasVisibleChildren => Owner.Presentation(Node.Path)?.HasChildren == true;
     public bool IsAbsent => Node.Left == null && Node.Right == null;
-    internal void Update(DatDiffNode node, bool[] branches, bool hasVisibleChildren)
+    internal void Refresh()
+    { OnPropertyChanged(string.Empty); LeftCell.Refresh(); RightCell.Refresh(); }
+    internal void RefreshInteraction()
+    { OnPropertyChanged(nameof(CanEditValue)); LeftCell.RefreshInteraction(); RightCell.RefreshInteraction(); }
+    internal void RefreshDifference()
     {
-        Node = node;
-        TreeBranches = branches;
-        HasVisibleChildren = hasVisibleChildren;
-        OnPropertyChanged(string.Empty);
-        LeftCell.Refresh();
-        RightCell.Refresh();
+        foreach (var property in new[] { nameof(DifferenceText), nameof(ValueDiffers), nameof(LeftBackground), nameof(RightBackground), nameof(StateColor) }) OnPropertyChanged(property);
+        RefreshValue();
     }
     internal void RefreshValue() { LeftCell.Refresh(); RightCell.Refresh(); OnPropertyChanged(nameof(CanEditValue)); }
     public Thickness Indent => new(Node.Depth * 14, 0, 0, 0);
-    public string ToggleText => Node.Children.Count == 0 ? "·" : Node.IsExpanded ? "▼" : "▶";
+    public string ToggleText => !HasVisibleChildren ? "·" : Owner.IsExpanded(Node.Path) ? "▼" : "▶";
     public string LeftPath => IsAbsent ? Node.Path : Node.Left?.Path is { Length: > 0 } p ? p : Node.Left == null ? "—" : Owner.Session!.Left.Current.Schema.StructName;
     public string RightPath => IsAbsent ? Node.Path : Node.Right?.Path is { Length: > 0 } p ? p : Node.Right == null ? "—" : Owner.Session!.Right.Current.Schema.StructName;
     private static string Detail(BinaryField? field) => field == null ? "" : $"+{field.Offset:N0}" + (field.BitWidth > 0 ? $" · bit {field.BitOffset}:{field.BitWidth}" : "");
@@ -66,9 +68,11 @@ public sealed class DatSideCell : ObservableObject, IDatValueRow
     public bool IsCellEditing => Equals(Owner.CellEditTarget, EditTarget);
     public string ValueColor => Row.ValueDiffers ? "#FFE082" : "#EEEEEE";
     public string EditableValue => Field is not { } field ? "—" : field.IsContainer && field.Type.Kind != BinaryKind.Union
-        ? $"하위 {field.Children().Count():N0}개"
+        ? $"하위 {(field.Type.Kind == BinaryKind.Array ? field.Type.Count : field.Type.Members.Count(m => !m.IsPadding)):N0}개"
         : BinaryValueCodec.Format(Owner.Session!.Version(Version).Current.Data, field, Owner.EncodingName, Owner.ShowHex || field.Type.Kind == BinaryKind.Union);
     public DatSideCell(DatRowViewModel row, DatSourceVersion version) { Row = row; Version = version; }
+    internal void RefreshInteraction()
+    { OnPropertyChanged(nameof(IsCellEditing)); OnPropertyChanged(nameof(CanEditValue)); }
     internal void Refresh()
     {
         OnPropertyChanged(nameof(EditableValue)); OnPropertyChanged(nameof(IsCellEditing)); OnPropertyChanged(nameof(CanEditValue));

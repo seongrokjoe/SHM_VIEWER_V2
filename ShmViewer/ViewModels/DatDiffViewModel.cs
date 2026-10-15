@@ -14,6 +14,8 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     private readonly Func<string, bool> _confirm;
     private CancellationTokenSource? _cancellation;
     private bool _disposed;
+    private bool _cancellableOperation;
+    public bool CanCancel => !_disposed && IsBusy && _cancellableOperation && _cancellation?.IsCancellationRequested == false;
     private bool _settingEditor;
     private bool _rebuildingRows;
     internal bool IsRefreshingRows => _rebuildingRows;
@@ -22,6 +24,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     private DatViewerNode? _viewerRoot;
     private const string InitialStatus = "버전1·2의 DAT를 선택하세요. 구조 파일을 자동으로 읽으며, 없으면 지정한 헤더·Struct를 사용합니다.";
     public Action<DatSaveResult, string> ShowSaveNotice { get; set; } = DatSaveDialog.Show;
+    public Action<string, string> ShowErrorNotice { get; set; } = UserNotice.ShowError;
     public DatFileStore FileStore { get; set; } = new();
     public bool LoadOnly
     {
@@ -86,7 +89,7 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     public event Action? ViewResetRequested;
     public event Action? RowsUpdating;
     public event Action? RowsUpdated;
-    [ObservableProperty] private ObservableCollection<DatRowViewModel> _rows = new();
+    public DatRowCollection Rows { get; }
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _encodingName = "ASCII";
     [ObservableProperty] private bool _showHex;
@@ -99,13 +102,14 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     public DatSourceVersion ActiveVersion
     {
         get => _activeVersion;
-        set
-        {
-            if (value == _activeVersion) return;
-            if (!CanInteract || HasCellEdit && !CommitCellEdit() || HasPendingEdit && !_confirm("적용하지 않은 입력을 버리고 편집 버전을 바꾸시겠습니까?"))
-            { NotifyActiveVersion(); return; }
-            _activeVersion = value; LoadEditor(); NotifyActiveVersion();
-        }
+        set => _ = SetActiveVersionAsync(value);
+    }
+    public async Task<bool> SetActiveVersionAsync(DatSourceVersion value)
+    {
+        if (value == _activeVersion) return true;
+        if (!CanInteract && _cellCommitTask == null || HasCellEdit && !await CommitCellEditAsync() || HasPendingEdit && !_confirm("적용하지 않은 입력을 버리고 편집 버전을 바꾸시겠습니까?"))
+        { NotifyActiveVersion(); return false; }
+        _activeVersion = value; LoadEditor(); NotifyActiveVersion(); return true;
     }
     public bool ActiveLeft { get => ActiveVersion == DatSourceVersion.Version1; set { if (value) ActiveVersion = DatSourceVersion.Version1; } }
     public bool ActiveRight { get => !ActiveLeft; set { if (value) ActiveVersion = DatSourceVersion.Version2; } }
@@ -134,16 +138,19 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     public DatRowViewModel? SelectedRow
     {
         get => _selectedRow;
-        set
-        {
-            if (_rebuildingRows || ReferenceEquals(value, _selectedRow)) return;
-            if (HasCellEdit && !CommitCellEdit()) { OnPropertyChanged(); return; }
-            if (HasPendingEdit && !_confirm("적용하지 않은 입력을 버리고 다른 항목을 선택하시겠습니까?")) { OnPropertyChanged(); return; }
-            SetProperty(ref _selectedRow, value); LoadEditor();
-        }
+        set => _ = SelectRowAsync(value);
+    }
+    public async Task<bool> SelectRowAsync(DatRowViewModel? value)
+    {
+        if (_rebuildingRows || ReferenceEquals(value, _selectedRow)) return true;
+        if (!CanInteract && _cellCommitTask == null) { OnPropertyChanged(nameof(SelectedRow)); return false; }
+        if (HasCellEdit && !await CommitCellEditAsync() || HasPendingEdit && !_confirm("적용하지 않은 입력을 버리고 다른 항목을 선택하시겠습니까?"))
+        { OnPropertyChanged(nameof(SelectedRow)); return false; }
+        SetProperty(ref _selectedRow, value, nameof(SelectedRow)); LoadEditor(); return true;
     }
     public DatDiffViewModel(Func<string, bool>? confirm = null)
     {
+        Rows = new(this);
         _confirm = confirm ?? (message => MessageBox.Show(message, "DAT Diff", MessageBoxButton.YesNo,
             MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes);
         Left = new("버전1", () => InvalidateInput(true), () => DataKind);
@@ -185,9 +192,9 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(LoadOnly)); OnPropertyChanged(nameof(ViewerUsesLeft)); OnPropertyChanged(nameof(ViewerUsesRight));
         NotifyActiveVersion(); NotifyState(); ViewResetRequested?.Invoke();
     }
-    partial void OnIsBusyChanged(bool value) => NotifyState();
-    partial void OnEncodingNameChanged(string value) { RebuildRows(); RebuildViewerRows(); if (!HasPendingEdit && !HasCellEdit) LoadEditor(); }
-    partial void OnShowHexChanged(bool value) { RebuildRows(); RebuildViewerRows(); if (!HasPendingEdit && !HasCellEdit) LoadEditor(); }
+    partial void OnIsBusyChanged(bool value) { if (!value) _cancellableOperation = false; NotifyState(); RefreshRealizedInteraction(); }
+    partial void OnEncodingNameChanged(string value) { RefreshValueFormatting(); if (!HasPendingEdit && !HasCellEdit) LoadEditor(); }
+    partial void OnShowHexChanged(bool value) { RefreshValueFormatting(); if (!HasPendingEdit && !HasCellEdit) LoadEditor(); }
     partial void OnEditorTextChanged(string value)
     {
         if (!_settingEditor && HasTargetSelection) { HasPendingEdit = true; EditorError = string.Empty; }
@@ -198,14 +205,13 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     private async Task Diff()
     {
         if (!CanInteract || !ConfirmDiscard()) return;
-        IsBusy = true; Status = "DAT 구조 로드 및 비교 중...";
-        _cancellation?.Dispose(); _cancellation = new(); var token = _cancellation.Token;
+        var token = BeginOperation("DAT 구조 로드 및 비교 중...");
         try
         {
             if (LoadOnly)
             {
                 var input = (ViewerUsesLeft ? Left : Right).Capture();
-                var document = await Task.Run(() => { token.ThrowIfCancellationRequested(); return input.Load(); }, token);
+                var document = await RunBackground(() => { token.ThrowIfCancellationRequested(); return input.Load(); }, token);
                 token.ThrowIfCancellationRequested(); if (_disposed) return;
                 ClearResults(); ViewerDocument = document; ViewerSession = new(document);
                 _viewerRoot = new(document.Root, 0) { IsExpanded = true };
@@ -214,26 +220,28 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
             else
             {
                 var left = Left.Capture(); var right = Right.Capture();
-                var session = await Task.Run(() =>
+                var session = await RunBackground(() =>
                 {
                     DatDocument Load(DatInputSnapshot input)
                     {
                         token.ThrowIfCancellationRequested();
-                        try { return input.Load(); }
-                        catch (Exception ex) { throw new InvalidDataException(input.Label + ": " + ex.Message, ex); }
+                        return input.Load();
                     }
                     return new DatDiffSession(Load(left), Load(right), token);
                 }, token);
                 token.ThrowIfCancellationRequested(); if (_disposed) return;
-                ClearResults(); Session = session; RebuildRows();
+                Status = "비교 목록 준비 중...";
+                var rows = await RunBackground(() => PrepareRows(session.Comparison, ComparisonMode, token, reset: true, fresh: true), token);
+                token.ThrowIfCancellationRequested(); if (_disposed) return;
+                ClearResults(); Session = session; PublishRows(rows);
                 Status = $"{LeftSummary} | {RightSummary}\n버전1: {SourceLabel(session.Left.Current)}\n버전2: {SourceLabel(session.Right.Current)}";
             }
         }
         catch (OperationCanceledException) { Status = "로드를 취소했습니다."; }
-        catch (Exception ex) { Status = "로드 실패: " + ex.Message; }
+        catch (Exception ex) { ReportFailure("로드 실패", ex); }
         finally { if (!_disposed) { IsBusy = false; NotifyState(); } }
     }
-    [RelayCommand] private void Cancel() => _cancellation?.Cancel();
+    [RelayCommand(CanExecute = nameof(CanCancel))] private void Cancel() { _cancellation?.Cancel(); NotifyState(); }
     private void RebuildViewerRows()
     {
         var rebuilding = _rebuildingRows; _rebuildingRows = true;
@@ -248,77 +256,85 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     }
     [RelayCommand] private void ToggleViewer(DatViewerRowViewModel row)
     { if (CanInteract && LoadOnly) { row.Node.IsExpanded = !row.Node.IsExpanded; RebuildViewerRows(); } }
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void Toggle(DatRowViewModel row)
-    { if (CanEdit) { row.Node.IsExpanded = !row.Node.IsExpanded; RebuildRows(); } }
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void NextDifference() => NavigateDifference(1);
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void PreviousDifference() => NavigateDifference(-1);
-    private void NavigateDifference(int direction)
+    [RelayCommand(CanExecute = nameof(CanEdit))] private async Task Toggle(DatRowViewModel row)
+    { if (CanEdit) { row.Node.IsExpanded = !row.Node.IsExpanded; await RefreshRowsAsync(); } }
+    [RelayCommand(CanExecute = nameof(CanEdit))] private Task NextDifference() => NavigateDifference(1);
+    [RelayCommand(CanExecute = nameof(CanEdit))] private Task PreviousDifference() => NavigateDifference(-1);
+    private async Task NavigateDifference(int direction)
     {
-        if (!CanEdit || Session == null) return;
-        var ordered = _displayNodes.Values.ToList();
-        var candidates = ordered.Select((node, index) => (Node: node, Index: index))
-            .Where(item => MatchesDifference(item.Node) && item.Node.Children.All(c => !MatchesDifference(c))).ToArray();
-        if (candidates.Length == 0) return;
-        var current = ordered.FindIndex(n => n.Path == SelectedRow?.Node.Path);
-        var node = direction > 0
-            ? candidates.FirstOrDefault(item => item.Index > current).Node ?? candidates[0].Node
-            : candidates.LastOrDefault(item => item.Index < current).Node ?? candidates[^1].Node;
-        for (var parent = node.Parent; parent != null; parent = parent.Parent) parent.IsExpanded = true;
-        RebuildRows(); SelectedRow = Rows.FirstOrDefault(r => r.Node.Path == node.Path);
-        if (SelectedRow != null) ScrollRequested?.Invoke(SelectedRow);
+        if (!CanEdit || _differenceOrder.Count == 0) return;
+        var current = _selectedRow == null ? -1 : DisplayOrder(_selectedRow.Node);
+        var candidates = direction > 0 ? _differenceOrder.GetViewBetween(current + 1, int.MaxValue) :
+            _differenceOrder.GetViewBetween(int.MinValue, current - 1);
+        var candidate = direction > 0 ? candidates.Min : candidates.Max;
+        var valid = _differenceOrder.Contains(candidate) && (direction > 0 ? candidate > current : candidate < current);
+        var index = valid ? candidate : direction > 0 ? _differenceOrder.Min : _differenceOrder.Max;
+        var node = _orderedDisplay[index]; var changed = false; var ancestors = new List<string>();
+        for (var parent = node.Parent; parent != null; parent = parent.Parent)
+        { changed |= !IsExpanded(parent.Path); ancestors.Add(parent.Path); }
+        if (changed) await RefreshRowsAsync(expandPaths: ancestors);
+        if (FindVisibleRow(node.Path) is { } row)
+        { if (await SelectRowAsync(row)) ScrollRequested?.Invoke(row); }
     }
     private IEnumerable<DatDiffNode> Selection() => SelectedNodes.Count > 0 ? SelectedNodes : SelectedRow == null ? Array.Empty<DatDiffNode>() : new[] { SelectedRow.Node };
-    [RelayCommand(CanExecute = nameof(CanApplySelection))] private void UseLeft() => ApplySource(DatSourceVersion.Version1);
-    [RelayCommand(CanExecute = nameof(CanApplySelection))] private void UseRight() => ApplySource(DatSourceVersion.Version2);
+    [RelayCommand(CanExecute = nameof(CanApplySelection))] private Task UseLeft() => ApplySource(DatSourceVersion.Version1);
+    [RelayCommand(CanExecute = nameof(CanApplySelection))] private Task UseRight() => ApplySource(DatSourceVersion.Version2);
     private bool CanApplyRow(DatRowViewModel? row) => CanEdit && row is { IsAbsent: false };
-    [RelayCommand(CanExecute = nameof(CanApplyRow))] private void ApplyLeftRow(DatRowViewModel row) => ApplySource(DatSourceVersion.Version1, row);
-    [RelayCommand(CanExecute = nameof(CanApplyRow))] private void ApplyRightRow(DatRowViewModel row) => ApplySource(DatSourceVersion.Version2, row);
-    private void ApplySource(DatSourceVersion source, DatRowViewModel? row = null) => Edit(() =>
+    [RelayCommand(CanExecute = nameof(CanApplyRow))] private Task ApplyLeftRow(DatRowViewModel row) => ApplySource(DatSourceVersion.Version1, row);
+    [RelayCommand(CanExecute = nameof(CanApplyRow))] private Task ApplyRightRow(DatRowViewModel row) => ApplySource(DatSourceVersion.Version2, row);
+    private async Task ApplySource(DatSourceVersion source, DatRowViewModel? row = null)
     {
-        var paths = (row == null ? Selection() : new[] { row.Node })
-            .Where(n => n.Left != null || n.Right != null).Select(n => n.Path).ToArray();
-        if (paths.Length == 0) return;
-        var plan = Session!.PreviewApply(paths, source);
-        if (plan.ExpandedScopes.Count > 0 && !_confirm("개별 적용으로는 배열·union 등의 구조를 유지할 수 없습니다.\n다음 그룹의 구조와 모든 값을 소스와 일치시킵니다:\n" +
-            string.Join("\n", plan.ExpandedScopes.Distinct().Select(p => p.Length == 0 ? "전체 구조체" : p)) + "\n\n전체 범위를 적용하시겠습니까?")) return;
-        Session.Apply(plan);
-    });
-    [RelayCommand(CanExecute = nameof(CanRemoveSelection))] private void Remove() => Edit(() => Session!.Remove(ActiveVersion, Selection().Select(n => n.Path)));
-    [RelayCommand(CanExecute = nameof(HasTargetSelection))] private void SetZero() => Edit(() => Session!.SetZero(ActiveVersion, Selection().Select(n => n.Path)));
-    [RelayCommand(CanExecute = nameof(HasTargetSelection))] private void ApplyValue()
-    {
-        if (SelectedRow?.CanEditValue == true) Edit(() => Session!.SetValue(ActiveVersion, SelectedRow.Node.Path, EditorText, EncodingName), true);
-    }
-    [RelayCommand(CanExecute = nameof(CanEdit))] private void CancelEdit() { LoadEditor(); RebuildRows(); }
-    [RelayCommand(CanExecute = nameof(CanUndo))] private void Undo() => EditHistory(true);
-    [RelayCommand(CanExecute = nameof(CanRedo))] private void Redo() => EditHistory(false);
-    private void Edit(Action action, bool applyEditor = false)
-    {
-        if (!CanEdit) return;
-        if ((!applyEditor && HasPendingEdit || HasCellEdit) && !_confirm("적용하지 않은 입력을 버리고 이 작업을 수행하시겠습니까?")) return;
-        try
+        if (HasCellEdit && !await CommitCellEditAsync()) return;
+        var paths = (row == null ? Selection() : new[] { row.Node }).Where(n => n.Left != null || n.Right != null).Select(n => n.Path).ToArray();
+        await RunEditAsync(async (session, token) =>
         {
-            action(); ClearCellEdit(); HasPendingEdit = false; EditorError = string.Empty;
-            RebuildRows(); LoadEditor(); UpdateSummary();
-        }
-        catch (Exception ex) { EditorError = ex.Message; }
-        NotifyState();
+            if (paths.Length == 0) return null;
+            var plan = await RunBackground(() => session.PreviewApply(paths, source, token), token);
+            token.ThrowIfCancellationRequested();
+            if (plan.ExpandedScopes.Count > 0 && !_confirm("개별 적용으로는 배열·union 등의 구조를 유지할 수 없습니다.\n다음 그룹의 구조와 모든 값을 소스와 일치시킵니다:\n" +
+                string.Join("\n", plan.ExpandedScopes.Distinct().Select(p => p.Length == 0 ? "전체 구조체" : p)) + "\n\n전체 범위를 적용하시겠습니까?")) return null;
+            return plan.Prepared;
+        }, failureTitle: source == DatSourceVersion.Version1 ? "버전1 → 버전2 적용 실패" : "버전2 → 버전1 적용 실패");
     }
+    [RelayCommand(CanExecute = nameof(CanRemoveSelection))] private Task Remove()
+    {
+        var paths = Selection().Select(n => n.Path).ToArray(); var version = ActiveVersion;
+        return RunEditAsync((s, t) => RunBackground<DatPreparedChange?>(() => s.PrepareRemove(version, paths, t), t), failureTitle: "삭제 실패");
+    }
+    [RelayCommand(CanExecute = nameof(HasTargetSelection))] private Task SetZero()
+    {
+        var paths = Selection().Select(n => n.Path).ToArray(); var version = ActiveVersion;
+        return RunEditAsync((s, t) => RunBackground<DatPreparedChange?>(() => s.PrepareSetZero(version, paths, t), t), failureTitle: "값 초기화 실패");
+    }
+    [RelayCommand(CanExecute = nameof(HasTargetSelection))] private Task ApplyValue()
+    {
+        if (SelectedRow?.CanEditValue != true) return Task.CompletedTask;
+        var path = SelectedRow.Node.Path; var version = ActiveVersion; var text = EditorText; var encoding = EncodingName;
+        return RunEditAsync((s, t) => RunBackground<DatPreparedChange?>(() => s.PrepareSetValue(version, path, text, encoding, t), t), applyEditor: true);
+    }
+    [RelayCommand(CanExecute = nameof(CanEdit))] private void CancelEdit() => LoadEditor();
+    [RelayCommand(CanExecute = nameof(CanUndo))] private Task Undo() => EditHistory(true);
+    [RelayCommand(CanExecute = nameof(CanRedo))] private Task Redo() => EditHistory(false);
     [RelayCommand(CanExecute = nameof(CanSaveLeft))] private Task SaveLeft() => SaveVersion(DatSourceVersion.Version1);
     [RelayCommand(CanExecute = nameof(CanSaveRight))] private Task SaveRight() => SaveVersion(DatSourceVersion.Version2);
     [RelayCommand(CanExecute = nameof(CanSave))] private Task Save() => SaveVersion(LoadOnly && !ViewerUsesLeft ? DatSourceVersion.Version2 : ActiveVersion);
     private async Task SaveVersion(DatSourceVersion version)
     {
         if (!CanSave) return;
-        IsBusy = true;
+        IsBusy = true; Status = "DAT 및 구조 파일 저장 중...";
         try
         {
-            var result = await Task.Run(() => LoadOnly ? ViewerSession!.Save(FileStore) : Session!.Save(version, FileStore));
+            var result = await RunBackground(() => LoadOnly ? ViewerSession!.Save(FileStore) : Session!.Save(version, FileStore));
             var label = LoadOnly ? (ViewerUsesLeft ? "버전1" : "버전2") : (version == DatSourceVersion.Version1 ? "버전1" : "버전2");
             Status = result.Message(label); NotifyState();
             ShowSaveNotice(result, label);
         }
-        catch (Exception ex) { Status = "저장 실패: " + ex.Message; }
+        catch (Exception ex)
+        {
+            var label = version == DatSourceVersion.Version1 ? "버전1" : "버전2";
+            var path = LoadOnly ? ViewerDocument?.FilePath : Session?.Version(version).Current.FilePath;
+            ReportFailure("저장 실패", ex, label + " · " + path);
+        }
         finally { IsBusy = false; }
     }
     private void LoadEditor()
@@ -346,11 +362,11 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
             nameof(CanDiff), nameof(CanInteract), nameof(CanEdit), nameof(IsDiffMode), nameof(HasCellEdit), nameof(CanEditValues),
             nameof(CanUndo), nameof(CanRedo), nameof(SaveLabel), nameof(ExecuteLabel), nameof(ViewerSummary), nameof(ViewerLeftOption),
             nameof(LeftSummary), nameof(RightSummary), nameof(ComparisonColumnMinWidth), nameof(CanChangeComparisonMode),
-            nameof(CanApplySelection), nameof(RemainingDifferenceCount) }) OnPropertyChanged(name);
+            nameof(CanApplySelection), nameof(RemainingDifferenceCount), nameof(CanCancel) }) OnPropertyChanged(name);
         foreach (var command in new IRelayCommand[] { DiffCommand, SaveCommand, SaveLeftCommand, SaveRightCommand, ResetCommand, ToggleCommand,
             NextDifferenceCommand, PreviousDifferenceCommand, UseLeftCommand, UseRightCommand, ApplyLeftRowCommand, ApplyRightRowCommand,
             RemoveCommand, SetZeroCommand, ApplyValueCommand, CancelEditCommand, UndoCommand, RedoCommand,
-            ChangeComparisonModeCommand }) command.NotifyCanExecuteChanged();
+            ChangeComparisonModeCommand, CancelCommand }) command.NotifyCanExecuteChanged();
     }
     public void Dispose()
     {

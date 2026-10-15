@@ -5,126 +5,159 @@ namespace ShmViewer.ViewModels;
 public partial class DatDiffViewModel
 {
     private DatDiffNode? _displayRoot;
-    private readonly Dictionary<string, DatDiffNode> _displayNodes = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, DatRowViewModel> _rowCache = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _retainedPaths = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, bool> _unfilteredExpansion = new(StringComparer.Ordinal);
-
+    private Dictionary<string, DatDiffNode> _displayNodes = new(StringComparer.Ordinal);
+    private Dictionary<string, WeakReference<DatRowViewModel>> _rowCache = new(StringComparer.Ordinal);
+    private Dictionary<string, RowPresentation> _rowPresentation = new(StringComparer.Ordinal);
+    private HashSet<string> _retainedPaths = new(StringComparer.Ordinal);
+    private HashSet<string> _expandedPaths = new(StringComparer.Ordinal);
+    private HashSet<string>? _unfilteredExpansion;
+    private Dictionary<string, IReadOnlyList<DatDiffNode>> _displayChildren = new(StringComparer.Ordinal);
+    private Dictionary<string, int>? _displayOrder;
+    private readonly HashSet<DatRowViewModel> _realizedRows = new();
+    private SortedSet<int> _differenceOrder = new();
+    private IReadOnlyList<DatDiffNode> _orderedDisplay = Array.Empty<DatDiffNode>();
+    private int _maxRowDepth;
+    internal sealed record RowPresentation(bool[] Branches, bool HasChildren, int Index);
+    private sealed record RowsSnapshot(DatDiffNode? Root, Dictionary<string, DatDiffNode> Nodes,
+        Dictionary<string, RowPresentation> Presentation,
+        HashSet<string> Retained, HashSet<string> Expanded, List<string> Paths, bool RowsChanged, IReadOnlyList<DatDiffNode> Ordered,
+        SortedSet<int> Differences, int MaxDepth, Dictionary<string, IReadOnlyList<DatDiffNode>> Children, Dictionary<string, int>? Order);
+    internal DatRowViewModel GetRow(string path)
+    {
+        if (_rowCache.TryGetValue(path, out var cached) && cached.TryGetTarget(out var existing)) return existing;
+        var row = new DatRowViewModel(this, _displayNodes[path]); _rowCache[path] = new(row); return row;
+    }
+    internal int CachedRowCount => _rowCache.Count;
+    internal DatRowViewModel? FindVisibleRow(string path) => _rowPresentation.ContainsKey(path) ? GetRow(path) : null;
+    internal DatDiffNode DisplayNode(string path, DatDiffNode fallback) => _displayNodes.GetValueOrDefault(path) ?? fallback;
+    internal RowPresentation? Presentation(string path) => _rowPresentation.GetValueOrDefault(path);
+    internal bool IsExpanded(string path) => _expandedPaths.Contains(path);
+    private int DisplayOrder(DatDiffNode node) => _displayOrder?.GetValueOrDefault(node.Path) ?? node.Order;
+    internal void RealizeRow(DatRowViewModel row) => _realizedRows.Add(row);
+    internal void UnrealizeRow(DatRowViewModel row) => _realizedRows.Remove(row);
+    private void RefreshRealizedRows() { foreach (var row in _realizedRows.ToArray()) row.Refresh(); }
+    private void RefreshRealizedInteraction() { foreach (var row in _realizedRows.ToArray()) row.RefreshInteraction(); }
+    private void RefreshValueFormatting()
+    { foreach (var row in _realizedRows.ToArray()) row.RefreshValue(); foreach (var row in ViewerRows) row.RefreshValue(); }
     private void ClearComparisonRows()
     {
-        _displayRoot = null;
-        _displayNodes.Clear();
-        _rowCache.Clear();
-        _retainedPaths.Clear();
-        _unfilteredExpansion.Clear();
+        _realizedRows.Clear(); _displayRoot = null; _displayNodes = new(StringComparer.Ordinal); _rowCache = new(StringComparer.Ordinal);
+        _rowPresentation = new(StringComparer.Ordinal); _retainedPaths = new(StringComparer.Ordinal); _expandedPaths = new(StringComparer.Ordinal);
+        _unfilteredExpansion = null; _displayChildren = new(StringComparer.Ordinal); _displayOrder = null;
+        _differenceOrder = new(); _orderedDisplay = Array.Empty<DatDiffNode>(); _maxRowDepth = 0;
     }
-
     private void ResetComparisonRows(DatComparisonMode nextMode)
     {
-        if (Session != null)
-        {
-            if (ComparisonMode == DatComparisonMode.All && nextMode != DatComparisonMode.All)
-            {
-                _unfilteredExpansion.Clear();
-                foreach (var node in _displayNodes.Values) _unfilteredExpansion[node.Path] = node.IsExpanded;
-            }
-            foreach (var node in Session.Nodes)
-            {
-                if (nextMode == DatComparisonMode.All && _unfilteredExpansion.TryGetValue(node.Path, out var expanded))
-                    node.IsExpanded = expanded;
-                else if (_displayNodes.TryGetValue(node.Path, out var displayed)) node.IsExpanded = displayed.IsExpanded;
-            }
-        }
-        if (nextMode == DatComparisonMode.All) _unfilteredExpansion.Clear();
-        _displayRoot = null;
-        _displayNodes.Clear();
-        _retainedPaths.Clear();
+        if (ComparisonMode == DatComparisonMode.All && nextMode != DatComparisonMode.All) _unfilteredExpansion = new(_expandedPaths, StringComparer.Ordinal);
     }
-
-    private void RebuildRows()
+    private RowsSnapshot PrepareRows(DatComparisonIndex? comparison, DatComparisonMode mode, CancellationToken token,
+        bool reset = false, IReadOnlyDictionary<DatDiffNode, DatNodeState>? updates = null,
+        string? togglePath = null, bool toggleExpanded = false, IReadOnlyList<string>? expandPaths = null, bool fresh = false)
     {
-        var selectedPath = _selectedRow?.Node.Path;
-        var selectedPaths = SelectedNodes.Select(n => n.Path).ToHashSet(StringComparer.Ordinal);
-        var editingPath = CellEditTarget is DatCellTarget target ? target.Path : HasPendingEdit ? selectedPath : null;
-        var filtered = ComparisonMode != DatComparisonMode.All;
-        var nextRows = new List<DatRowViewModel>();
+        var nodes = comparison?.ByPath ?? new(StringComparer.Ordinal);
+        IReadOnlyList<DatDiffNode> ordered = comparison?.Nodes ?? new();
+        var children = new Dictionary<string, IReadOnlyList<DatDiffNode>>(StringComparer.Ordinal);
+        Dictionary<string, int>? order = null;
+        DatNodeState State(DatDiffNode node) => updates != null && updates.TryGetValue(node, out var state) ? state : node.State;
+        bool Matches(DatDiffNode node) => mode == DatComparisonMode.StructureDifferences ? State(node).StructureDifferenceCount > 0 : State(node).DifferenceCount > 0;
+        IReadOnlyList<DatDiffNode> PreviousChildren(DatDiffNode node) => _displayChildren.GetValueOrDefault(node.Path) ?? node.Children;
+        var samePaths = reset || _displayRoot == null || ordered.Count == _orderedDisplay.Count &&
+            ordered.Select(n => n.Path).SequenceEqual(_orderedDisplay.Select(n => n.Path));
+        if (!samePaths && comparison != null)
+        {
+            nodes = new(StringComparer.Ordinal); var merged = new List<DatDiffNode>(); order = new(StringComparer.Ordinal);
+            DatDiffNode Merge(DatDiffNode? current, DatDiffNode? previous, DatDiffNode? parent)
+            {
+                token.ThrowIfCancellationRequested();
+                var node = current ?? new DatDiffNode { Path = previous!.Path, Key = previous.Key, Parent = parent, Difference = "현재 구조에 없음" };
+                nodes.Add(node.Path, node); order.Add(node.Path, merged.Count); merged.Add(node);
+                var before = previous == null ? Array.Empty<DatDiffNode>() : PreviousChildren(previous);
+                var after = current?.Children ?? new List<DatDiffNode>();
+                if (before.Count == 0) { foreach (var child in after) Merge(child, null, node); return node; }
+                if (before.Count == after.Count && before.Select(n => n.Key).SequenceEqual(after.Select(n => n.Key)))
+                { for (var i = 0; i < after.Count; i++) Merge(after[i], before[i], node); return node; }
+                var oldChildren = before.ToDictionary(n => n.Key, StringComparer.Ordinal);
+                var newChildren = after.ToDictionary(n => n.Key, StringComparer.Ordinal);
+                var keys = new LinkedList<string>(oldChildren.Keys);
+                var positions = new Dictionary<string, LinkedListNode<string>>(StringComparer.Ordinal);
+                for (var item = keys.First; item != null; item = item.Next) positions.Add(item.Value, item);
+                LinkedListNode<string>? preceding = null;
+                foreach (var key in newChildren.Keys)
+                {
+                    if (!positions.TryGetValue(key, out var position))
+                    { position = preceding == null ? keys.AddFirst(key) : keys.AddAfter(preceding, key); positions.Add(key, position); }
+                    preceding = position;
+                }
+                var list = new List<DatDiffNode>(keys.Count);
+                foreach (var key in keys) list.Add(Merge(newChildren.GetValueOrDefault(key), oldChildren.GetValueOrDefault(key), node));
+                children.Add(node.Path, list); return node;
+            }
+            Merge(comparison.Root, _displayRoot, null); ordered = merged;
+        }
+        var presentation = new Dictionary<string, RowPresentation>(StringComparer.Ordinal);
+        var retained = reset ? new HashSet<string>(StringComparer.Ordinal) : new HashSet<string>(_retainedPaths, StringComparer.Ordinal);
+        var expanded = fresh ? new HashSet<string>(StringComparer.Ordinal) : reset && mode == DatComparisonMode.All && _unfilteredExpansion != null
+            ? new HashSet<string>(_unfilteredExpansion, StringComparer.Ordinal) : new HashSet<string>(_expandedPaths, StringComparer.Ordinal);
+        if ((fresh || _displayRoot == null) && comparison != null) expanded.Add(comparison.Root.Path);
+        if (togglePath != null) { if (toggleExpanded) expanded.Add(togglePath); else expanded.Remove(togglePath); }
+        if (expandPaths != null) foreach (var path in expandPaths) expanded.Add(path);
+        var paths = new List<string>(); var differences = new SortedSet<int>(); var maxDepth = 0;
+        var editingPath = fresh ? null : CellEditTarget is DatCellTarget target ? target.Path : HasPendingEdit ? _selectedRow?.Node.Path : null;
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            token.ThrowIfCancellationRequested(); var node = ordered[i];
+            if (mode != DatComparisonMode.All && Matches(node) && retained.Add(node.Path))
+                for (var parent = node.Parent; parent != null; parent = parent.Parent) expanded.Add(parent.Path);
+            if (Matches(node) && (mode == DatComparisonMode.StructureDifferences ? State(node).ChildStructureDifferences : State(node).ChildDifferences) == 0) differences.Add(i);
+        }
+        bool Visible(DatDiffNode node) => mode == DatComparisonMode.All || retained.Contains(node.Path) || editingPath != null && DatDiffSession.IsWithin(editingPath, node.Path);
+        void Add(DatDiffNode node, bool[] branches)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!Visible(node)) return;
+            var allChildren = children.GetValueOrDefault(node.Path) ?? node.Children;
+            var visibleChildren = allChildren.Count == 0 ? Array.Empty<DatDiffNode>() : allChildren.Where(Visible).ToArray();
+            if (editingPath != null && editingPath != node.Path && DatDiffSession.IsWithin(editingPath, node.Path)) expanded.Add(node.Path);
+            presentation.Add(node.Path, new(branches, visibleChildren.Length > 0, paths.Count)); paths.Add(node.Path); maxDepth = Math.Max(maxDepth, node.Depth);
+            if (expanded.Contains(node.Path))
+                for (var i = 0; i < visibleChildren.Length; i++) Add(visibleChildren[i], branches.Append(i < visibleChildren.Length - 1).ToArray());
+        }
+        var root = comparison?.Root;
+        if (root != null) Add(root, Array.Empty<bool>());
+        var rowsChanged = fresh || paths.Count != Rows.Count || paths.Where((path, i) => !_rowPresentation.TryGetValue(path, out var item) || item.Index != i).Any();
+        return new(root, nodes, presentation, retained, expanded, paths, rowsChanged, ordered, differences, maxDepth, children, order);
+    }
+    private void PublishRows(RowsSnapshot snapshot)
+    {
+        var selectedPath = _selectedRow?.Node.Path; var selected = SelectedNodes.Select(n => n.Path).ToArray();
         _rebuildingRows = true;
         try
         {
             RowsUpdating?.Invoke();
-            _displayNodes.Clear();
-            _displayRoot = Session == null ? null : BuildDisplayNode(Session.Root, _displayRoot, null);
-            if (filtered && Session != null)
-            {
-                foreach (var node in Session.Nodes.Where(MatchesDifference))
-                    if (_retainedPaths.Add(node.Path))
-                        for (var parent = _displayNodes[node.Path].Parent; parent != null; parent = parent.Parent)
-                            parent.IsExpanded = true;
-            }
-            bool Visible(DatDiffNode node) => !filtered || _retainedPaths.Contains(node.Path) ||
-                editingPath != null && DatDiffSession.IsWithin(editingPath, node.Path);
-            void Add(DatDiffNode node, bool[] branches)
-            {
-                if (!Visible(node)) return;
-                var children = node.Children.Where(Visible).ToArray();
-                if (editingPath != null && editingPath != node.Path && DatDiffSession.IsWithin(editingPath, node.Path)) node.IsExpanded = true;
-                if (!_rowCache.TryGetValue(node.Path, out var row)) _rowCache[node.Path] = row = new(this, node);
-                row.Update(node, branches, children.Length > 0);
-                nextRows.Add(row);
-                if (node.IsExpanded)
-                    for (var i = 0; i < children.Length; i++) Add(children[i], branches.Append(i < children.Length - 1).ToArray());
-            }
-            if (_displayRoot != null) Add(_displayRoot, Array.Empty<bool>());
-
-            // Reuse rows and the collection so applying a value does not reset selection or scrolling.
-            var visibleRows = nextRows.ToHashSet();
-            for (var i = Rows.Count - 1; i >= 0; i--) if (!visibleRows.Contains(Rows[i])) Rows.RemoveAt(i);
-            var existingRows = Rows.ToHashSet();
-            for (var i = 0; i < nextRows.Count; i++)
-            {
-                if (i < Rows.Count && ReferenceEquals(Rows[i], nextRows[i])) continue;
-                var existing = existingRows.Contains(nextRows[i]) ? Rows.IndexOf(nextRows[i]) : -1;
-                if (existing >= 0) Rows.Move(existing, i);
-                else Rows.Insert(i, nextRows[i]);
-            }
+            _displayRoot = snapshot.Root; _displayNodes = snapshot.Nodes;
+            _rowPresentation = snapshot.Presentation; _retainedPaths = snapshot.Retained; _expandedPaths = snapshot.Expanded;
+            _orderedDisplay = snapshot.Ordered; _differenceOrder = snapshot.Differences; _maxRowDepth = snapshot.MaxDepth;
+            _displayChildren = snapshot.Children; _displayOrder = snapshot.Order;
+            Rows.ReplaceRows(snapshot.Paths, snapshot.Presentation, snapshot.RowsChanged);
             SelectedNodes.Clear();
-            SelectedNodes.AddRange(nextRows.Where(r => selectedPaths.Contains(r.Node.Path)).Select(r => r.Node));
-            _selectedRow = nextRows.FirstOrDefault(r => r.Node.Path == selectedPath);
-            OnPropertyChanged(nameof(SelectedRow));
-            RowsUpdated?.Invoke();
+            foreach (var path in selected) if (_rowPresentation.ContainsKey(path) && _displayNodes.TryGetValue(path, out var node)) SelectedNodes.Add(node);
+            _selectedRow = selectedPath == null ? null : FindVisibleRow(selectedPath);
+            RefreshRealizedRows(); OnPropertyChanged(nameof(SelectedRow)); RowsUpdated?.Invoke();
         }
         finally { _rebuildingRows = false; }
         NotifyState();
     }
-
-    private DatDiffNode BuildDisplayNode(DatDiffNode? current, DatDiffNode? previous, DatDiffNode? parent)
+    private void PublishValueChanges(DatPreparedChange change)
     {
-        var source = current ?? previous!;
-        var node = new DatDiffNode
+        foreach (var (current, state) in change.Updates)
         {
-            Path = source.Path, Key = source.Key, Parent = parent, Left = current?.Left, Right = current?.Right,
-            IsExpanded = previous?.IsExpanded ?? source.IsExpanded,
-            DifferenceKinds = current?.DifferenceKinds ?? DatDifferenceKind.None,
-            HasDifference = current?.HasDifference ?? false, HasStructureDifference = current?.HasStructureDifference ?? false,
-            DifferenceCount = current?.DifferenceCount ?? 0, Difference = current?.Difference ?? "현재 구조에 없음"
-        };
-        _displayNodes[node.Path] = node;
-        var oldChildren = previous?.Children.ToDictionary(n => n.Key) ?? new();
-        var newChildren = current?.Children.ToDictionary(n => n.Key) ?? new();
-        var keys = previous == null ? newChildren.Keys.ToList() : oldChildren.Keys.ToList();
-        var known = keys.ToHashSet(StringComparer.Ordinal);
-        string? preceding = null;
-        foreach (var key in newChildren.Keys)
-        {
-            if (known.Add(key))
-            {
-                var position = preceding == null ? 0 : keys.IndexOf(preceding) + 1;
-                keys.Insert(position, key);
-            }
-            preceding = key;
+            if (!_displayNodes.TryGetValue(current.Path, out var display)) continue;
+            if (!ReferenceEquals(current, display)) display.SetState(state);
+            var position = DisplayOrder(display);
+            if (MatchesDifference(display) && (StructureComparison ? state.ChildStructureDifferences : state.ChildDifferences) == 0) _differenceOrder.Add(position);
+            else _differenceOrder.Remove(position);
         }
-        foreach (var key in keys)
-            node.Children.Add(BuildDisplayNode(newChildren.GetValueOrDefault(key), oldChildren.GetValueOrDefault(key), node));
-        return node;
+        var affected = change.Updates.Keys.Select(n => n.Path).ToHashSet(StringComparer.Ordinal);
+        foreach (var row in _realizedRows.ToArray()) if (affected.Contains(row.Path)) row.RefreshDifference();
     }
 }

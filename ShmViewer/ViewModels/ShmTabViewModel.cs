@@ -33,6 +33,8 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanRun))]
+    [NotifyPropertyChangedFor(nameof(CanSaveSchema))]
+    [NotifyCanExecuteChangedFor(nameof(SaveSchemaCommand))]
     private bool _isTreeBuilt;
 
     [ObservableProperty]
@@ -43,6 +45,8 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanRun))]
+    [NotifyPropertyChangedFor(nameof(CanSaveSchema))]
+    [NotifyCanExecuteChangedFor(nameof(SaveSchemaCommand))]
     private bool _hasUnresolvedTypes;
 
     [ObservableProperty] private bool _isActiveTab;
@@ -51,7 +55,10 @@ public partial class ShmTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _lastRefreshTime = "-";
     [ObservableProperty] private RefreshMode _refreshMode = RefreshMode.Ms500;
     [ObservableProperty] private bool _isManualMode;
-    [ObservableProperty] private bool _isBusy;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanSaveSchema))]
+    [NotifyCanExecuteChangedFor(nameof(SaveSchemaCommand))]
+    private bool _isBusy;
     [ObservableProperty] private bool _isInputBlocked;
     [ObservableProperty] private string _busyMessage = string.Empty;
 

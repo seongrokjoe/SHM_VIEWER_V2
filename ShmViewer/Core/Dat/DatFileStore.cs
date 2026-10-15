@@ -15,7 +15,7 @@ public sealed record DatSaveResult(string DatPath, string SchemaPath, string Bac
             detail += "DAT 크기는 같지만 구조가 변경되어 기존 헤더·Struct 매핑을 사용할 수 없습니다.\n";
         if (PreviousSize != Size || StructureChanged)
             detail += "이 앱에서 다시 Load하려면 함께 생성된 구조 파일(.dat.schema.json)이 필요합니다.\n\n";
-        detail += "DAT 선택 시 같은 폴더의 구조 파일을 자동으로 읽습니다.\nDAT와 구조 파일을 함께 보관·이동하세요. 파일 이름을 변경할 때도 두 파일의 이름을 함께 맞춰야 합니다.\n\n";
+        detail += "구조 파일로 다시 열려면 해당 버전의 '자동 구조 파일 사용'을 켜세요. 기본값은 헤더 사용입니다.\nDAT와 구조 파일을 함께 보관·이동하세요. 파일 이름을 변경할 때도 두 파일의 이름을 함께 맞춰야 합니다.\n\n";
         return detail + $"DAT: {DatPath}\n구조 파일: {SchemaPath}\n원본 백업: {BackupPath}" +
             (BackupSchemaPath == null ? "" : $"\n구조 파일 백업: {BackupSchemaPath}");
     }
@@ -26,17 +26,19 @@ public sealed class DatFileStore
     internal Action<string>? BeforeStage { get; set; }
     internal Func<DateTime> LocalNow { get; set; } = () => DateTime.Now;
 
-    public DatDocument Load(string path, Func<BinarySchema> parseHeader, bool useHeader = false)
+    public DatDocument Load(string path, Func<BinarySchema> parseHeader, bool useSchemaFile = false)
     {
         path = Path.GetFullPath(path);
         var data = File.ReadAllBytes(path);
         var schemaPath = DatSchemaFile.PathFor(path);
         var metadata = File.Exists(schemaPath) ? File.ReadAllBytes(schemaPath) : null;
-        var schema = !useHeader && metadata != null ? DatSchemaFile.Read(metadata, data) : parseHeader();
+        var schema = useSchemaFile
+            ? DatSchemaFile.Read(metadata ?? throw new InvalidDataException("구조 파일이 없습니다: " + schemaPath + "\n헤더로 로드하려면 '자동 구조 파일 사용'을 끄세요."), data)
+            : parseHeader();
         return new DatDocument(path, schema, data)
         {
             DiskStamp = new(DatSchemaFile.Hash(data), metadata == null ? null : DatSchemaFile.Hash(metadata)),
-            LoadedFromSchema = !useHeader && metadata != null
+            LoadedFromSchema = useSchemaFile
         };
     }
 

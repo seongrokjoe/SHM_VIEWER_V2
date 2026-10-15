@@ -30,17 +30,18 @@ public partial class DatDiffViewModel
     [ObservableProperty] private bool _showViewerSize = true;
     [ObservableProperty] private bool _showViewerValue = true;
 
-    public bool BeginCellEdit(IDatValueRow row)
+    private Task<bool>? _cellCommitTask;
+    public async Task<bool> BeginCellEditAsync(IDatValueRow row)
     {
-        if (!row.CanEditValue || !CanEditValues) return false;
         if (Equals(CellEditTarget, row.EditTarget)) return true;
-        if (HasCellEdit && !CommitCellEdit()) return false;
+        if (HasCellEdit && !await CommitCellEditAsync()) return false;
+        if (!row.CanEditValue || !CanEditValues) return false;
         if (HasPendingEdit && !_confirm("적용하지 않은 입력을 버리고 셀을 편집하시겠습니까?")) return false;
         var target = row.EditTarget;
         if (target is DatCellTarget side)
         {
             _activeVersion = side.Version;
-            _selectedRow = Rows.FirstOrDefault(r => r.Node.Path == side.Path);
+            _selectedRow = FindVisibleRow(side.Path);
             OnPropertyChanged(nameof(SelectedRow)); NotifyActiveVersion();
         }
         LoadEditor(); CellEditTarget = target;
@@ -49,38 +50,42 @@ public partial class DatDiffViewModel
         CellEditorText = BinaryValueCodec.FormatForEdit(data, field, EncodingName, ShowHex);
         CellEditorError = string.Empty; RefreshCellEditors(); return true;
     }
-    public bool CommitCellEdit()
+    public Task<bool> CommitCellEditAsync() => _cellCommitTask ??= CommitCellEditCoreAsync();
+    private async Task<bool> CommitCellEditCoreAsync()
     {
-        if (!HasCellEdit) return true;
-        if (!CanEditValues) return false;
+        // Yield before assigning the shared task so even a synchronous validation failure clears it.
+        await Task.Yield();
         try
         {
-            if (CellEditTarget is DatCellTarget cell) Session!.SetValue(cell.Version, cell.Path, CellEditorText, EncodingName);
-            else ViewerSession!.SetValue((BinaryField)CellEditTarget!, CellEditorText, EncodingName);
-            ClearCellEdit(); RebuildRows(); RebuildViewerRows(); LoadEditor(); UpdateSummary(); return true;
+            if (!HasCellEdit) return true;
+            if (!CanEditValues) return false;
+            var text = CellEditorText; var encoding = EncodingName;
+            if (CellEditTarget is DatCellTarget cell)
+                return await RunEditAsync((s, t) => RunBackground<DatPreparedChange?>(() => s.PrepareSetValue(cell.Version, cell.Path, text, encoding, t), t), applyEditor: true, cellEditor: true);
+            ViewerSession!.SetValue((BinaryField)CellEditTarget!, text, encoding);
+            ClearCellEdit(); RefreshCellEditors(); LoadEditor(); UpdateSummary(); return true;
         }
         catch (Exception ex) { CellEditorError = ex.Message; return false; }
+        finally { _cellCommitTask = null; }
     }
-    [RelayCommand] private void ApplyCellEdit() => CommitCellEdit();
+    [RelayCommand] private Task ApplyCellEdit() => CommitCellEditAsync();
     [RelayCommand] private void CancelCellEdit()
-    { ClearCellEdit(); RebuildRows(); RefreshCellEditors(); }
+    { if (CanInteract) { ClearCellEdit(); RefreshCellEditors(); } }
     private void ClearCellEdit()
     { CellEditTarget = null; CellEditorText = CellEditorError = string.Empty; }
     private void RefreshCellEditors()
     {
-        foreach (var row in Rows) row.RefreshValue();
+        RefreshRealizedInteraction();
         foreach (var row in ViewerRows) row.RefreshValue();
         NotifyState();
     }
-    private void EditHistory(bool undo)
+    private Task EditHistory(bool undo)
     {
-        if (!CanEditValues || (HasPendingEdit || HasCellEdit) && !_confirm("적용하지 않은 입력을 버리고 이 작업을 수행하시겠습니까?")) return;
+        if (!CanEditValues) return Task.CompletedTask;
+        if (!LoadOnly) return RunEditAsync((s, t) => RunBackground<DatPreparedChange?>(() => s.PrepareHistory(undo, t), t), failureTitle: undo ? "실행 취소 실패" : "다시 실행 실패");
+        if ((HasPendingEdit || HasCellEdit) && !_confirm("적용하지 않은 입력을 버리고 이 작업을 수행하시겠습니까?")) return Task.CompletedTask;
         ClearCellEdit(); HasPendingEdit = false; EditorError = string.Empty;
-        if (LoadOnly)
-        {
-            if (undo) ViewerSession!.Undo(); else ViewerSession!.Redo();
-            RebuildViewerRows(); UpdateSummary();
-        }
-        else Edit(() => { if (undo) Session!.Undo(); else Session!.Redo(); });
+        if (undo) ViewerSession!.Undo(); else ViewerSession!.Redo();
+        RefreshCellEditors(); UpdateSummary(); return Task.CompletedTask;
     }
 }

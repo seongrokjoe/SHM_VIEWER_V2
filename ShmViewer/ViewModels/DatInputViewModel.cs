@@ -4,21 +4,28 @@ using Microsoft.Win32;
 using ShmViewer.Core;
 using ShmViewer.Core.Dat;
 using ShmViewer.Core.Parser;
+using ShmViewer.Views.Dialogs;
 using System.Collections.ObjectModel;
 using System.IO;
 
 namespace ShmViewer.ViewModels;
 
-public sealed record DatInputSnapshot(string Label, string[] Headers, string DatPath, string StructName, HeaderParseOptions Options, bool UseHeader = false)
+public sealed record DatInputSnapshot(string Label, string[] Headers, string DatPath, string StructName, HeaderParseOptions Options, bool UseSchemaFile = false)
 {
     public BinarySchema Parse() => new HeaderParserService().ParseBinary(Headers, StructName, Options);
-    public DatDocument Load() => new DatFileStore().Load(DatPath, Parse, UseHeader);
+    public DatDocument Load()
+    {
+        try { return new DatFileStore().Load(DatPath, Parse, UseSchemaFile); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { throw new InvalidDataException($"{Label} · {DatPath}\n{ex.Message}", ex); }
+    }
 }
 
 public partial class DatInputViewModel : ObservableObject
 {
     private readonly Func<bool> _beforeChange;
     public string Label { get; }
+    public Action ShowSctcNotice { get; set; } = UserNotice.ShowSctcRequirement;
     private readonly Func<SctcDataKind> _dataKind;
     private bool _useSctcPath;
     public bool UseSctcPath
@@ -29,7 +36,7 @@ public partial class DatInputViewModel : ObservableObject
             if (value == _useSctcPath) return;
             if (value && !_beforeChange()) { OnPropertyChanged(); return; }
             SetProperty(ref _useSctcPath, value);
-            if (value) ApplySctcPreset();
+            if (value) { ShowSctcNotice(); ApplySctcPreset(); }
         }
     }
     public ObservableCollection<HeaderFileEntry> Headers { get; } = new();
@@ -48,11 +55,11 @@ public partial class DatInputViewModel : ObservableObject
     private string _includeDirectories = string.Empty;
     private string _defines = string.Empty;
     private string _pack = "8";
-    private bool _useHeader;
-    public bool UseHeader
+    private bool _useSchemaFile;
+    public bool UseSchemaFile
     {
-        get => _useHeader;
-        set { if (value != _useHeader) { if (_beforeChange()) SetProperty(ref _useHeader, value); else OnPropertyChanged(); } }
+        get => _useSchemaFile;
+        set { if (value != _useSchemaFile) { if (_beforeChange()) SetProperty(ref _useSchemaFile, value); else OnPropertyChanged(); } }
     }
     public string DatPath { get => _datPath; set => Change(ref _datPath, value); }
     public string StructName { get => _structName; set => Change(ref _structName, value); }
@@ -62,12 +69,12 @@ public partial class DatInputViewModel : ObservableObject
     public DatInputViewModel(string label, Func<bool> beforeChange, Func<SctcDataKind> dataKind)
     { Label = label; _beforeChange = beforeChange; _dataKind = dataKind; }
     public bool HasInput => Headers.Count > 0 || UseSctcPath || DatPath.Length > 0 || StructName.Length > 0 ||
-        IncludeDirectories.Length > 0 || Defines.Length > 0 || Pack != "8" || UseHeader;
+        IncludeDirectories.Length > 0 || Defines.Length > 0 || Pack != "8" || UseSchemaFile;
     internal void Reset()
     {
         Headers.Clear(); SelectHeaders(Array.Empty<HeaderFileEntry>());
-        _useSctcPath = false; _useHeader = false; _datPath = _structName = _includeDirectories = _defines = string.Empty; _pack = "8";
-        foreach (var name in new[] { nameof(UseSctcPath), nameof(UseHeader), nameof(DatPath), nameof(StructName), nameof(IncludeDirectories), nameof(Defines), nameof(Pack) })
+        _useSctcPath = false; _useSchemaFile = false; _datPath = _structName = _includeDirectories = _defines = string.Empty; _pack = "8";
+        foreach (var name in new[] { nameof(UseSctcPath), nameof(UseSchemaFile), nameof(DatPath), nameof(StructName), nameof(IncludeDirectories), nameof(Defines), nameof(Pack) })
             OnPropertyChanged(name);
     }
     internal void ApplySctcPreset()
@@ -138,8 +145,8 @@ public partial class DatInputViewModel : ObservableObject
     public DatInputSnapshot Capture()
     {
         if (string.IsNullOrWhiteSpace(DatPath)) throw new InvalidDataException(Label + ": DAT 파일을 지정하세요.");
-        if (!UseHeader && File.Exists(DatSchemaFile.PathFor(DatPath.Trim())))
-            return new(Label, Array.Empty<string>(), DatPath.Trim(), string.Empty, new(), false);
+        if (UseSchemaFile)
+            return new(Label, Array.Empty<string>(), DatPath.Trim(), string.Empty, new(), true);
         foreach (var header in Headers) header.Check();
         if (Headers.Count == 0 || string.IsNullOrWhiteSpace(StructName)) throw new InvalidDataException(Label + ": 헤더와 Struct를 지정하세요.");
         var missing = Headers.Where(h => !h.IsAvailable).Select(h => h.Path).ToArray();
@@ -147,6 +154,6 @@ public partial class DatInputViewModel : ObservableObject
         if (!int.TryParse(Pack, out var pack)) throw new InvalidDataException(Label + ": Pack은 정수로 입력하세요.");
         string[] Lines(string text) => text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return new(Label, Headers.Select(h => h.Path).ToArray(), DatPath.Trim(), StructName.Trim(),
-            new() { StrictBinaryLayout = true, Pack = pack, IncludeDirectories = Lines(IncludeDirectories), Defines = Lines(Defines) }, UseHeader);
+            new() { StrictBinaryLayout = true, Pack = pack, IncludeDirectories = Lines(IncludeDirectories), Defines = Lines(Defines) });
     }
 }

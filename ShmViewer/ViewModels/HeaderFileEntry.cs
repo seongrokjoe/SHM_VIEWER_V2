@@ -7,6 +7,7 @@ public partial class HeaderFileEntry : ObservableObject
 {
     public string Path { get; }
     public string Name => System.IO.Path.GetFileName(Path);
+    public string FullPath => System.IO.Path.GetFullPath(Path);
     public string Directory => System.IO.Path.GetDirectoryName(Path) ?? string.Empty;
     [ObservableProperty] private string _error = string.Empty;
     public bool IsAvailable => string.IsNullOrEmpty(Error);

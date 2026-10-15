@@ -18,7 +18,9 @@ public sealed class PresetTests
     {
         var store = new MemoryStore();
         using var vm = new MainViewModel(store, _ => true);
+        var notices = 0; vm.ShowSctcNotice = () => notices++;
         Assert.True(vm.SetDefaultPreset(true)); await vm.Initialization;
+        Assert.True(vm.SetDefaultPreset(true)); Assert.Equal(1, notices);
         Assert.Equal(7, vm.HeaderFiles.Count); Assert.Equal(2, vm.HeaderGroups.Count());
         Assert.Equal(5, vm.Tabs.Count);
         Assert.All(vm.Tabs, t => { Assert.Equal(RefreshMode.Ms1000, t.RefreshMode); Assert.False(t.IsRunning); });
@@ -35,6 +37,7 @@ public sealed class PresetTests
     {
         var approve = true;
         var store = new MemoryStore(); using var vm = new MainViewModel(store, _ => approve);
+        vm.ShowSctcNotice = () => { };
         vm.SetDefaultPreset(true); await vm.Initialization;
         var dat = vm.DatDiff; dat.Left.StructName = "MyStruct";
         var tab = vm.Tabs[0]; approve = false;
@@ -48,7 +51,7 @@ public sealed class PresetTests
     public async Task RestorationRetainsUnresolvedTabsAndSavesChangedRefresh()
     {
         var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "missing.h");
-        var store = new MemoryStore { State = new(true, new() { missing }, new() { new("MEMORY", "MissingStruct", "Ms1000") }) };
+        var store = new MemoryStore { State = new(false, new() { missing }, new() { new("MEMORY", "MissingStruct", "Ms1000") }) };
         using var vm = new MainViewModel(store, _ => true); await vm.Initialization;
         Assert.False(Assert.Single(vm.HeaderFiles).IsAvailable);
         var tab = Assert.Single(vm.Tabs); Assert.False(tab.CanRun); Assert.False(tab.IsRunning);
@@ -57,7 +60,7 @@ public sealed class PresetTests
         Assert.Equal(missing, store.State.Headers.Single());
     }
     [Fact]
-    public async Task RestorationRemovesOnlyObsoleteSctcDefaults()
+    public async Task RestartAfterSctcStartsUncheckedAndEmptyAndClearsSavedState()
     {
         var obsolete = Path.Combine(SctcPreset.Load().HeaderGroups[0].Directory, "jobinfo.h");
         var custom = Path.Combine(Path.GetTempPath(), "custom", "jobinfo.h");
@@ -66,14 +69,15 @@ public sealed class PresetTests
             new("OBJECT_INFO_MEMORY", "STJOBINFO", "Ms1000"), new("CUSTOM", "STJOBINFO", "Ms1000")
         }) };
         using var vm = new MainViewModel(store, _ => true); await vm.Initialization;
-        Assert.Equal(custom, Assert.Single(vm.HeaderFiles).Path);
-        Assert.Equal("CUSTOM", Assert.Single(vm.Tabs).ShmName);
-        Assert.Equal(custom, Assert.Single(store.State.Headers));
+        Assert.False(vm.UseDefaultSctcClean); Assert.Empty(vm.HeaderFiles); Assert.Empty(vm.Tabs);
+        Assert.False(store.State.UseDefaultSctcClean); Assert.Empty(store.State.Headers); Assert.Empty(store.State.Tabs);
     }
     [Fact]
     public void DatPresetsAreIndependentAndManualChangesClearOnlyThatSide()
     {
         using var vm = new DatDiffViewModel(_ => true);
+        var notices = 0;
+        vm.Left.ShowSctcNotice = vm.Right.ShowSctcNotice = () => notices++;
         Assert.True(vm.IsRunData); Assert.False(vm.Left.UseSctcPath); Assert.False(vm.Right.UseSctcPath);
         vm.Left.Pack = "2"; vm.Right.StructName = "Custom";
         vm.Left.UseSctcPath = true;
@@ -89,14 +93,19 @@ public sealed class PresetTests
         vm.IsRunData = true;
         Assert.Equal("custom.dat", vm.Left.DatPath); Assert.Equal("tagRun", vm.Right.StructName);
         vm.Right.UseSctcPath = false; Assert.Equal("tagRun", vm.Right.StructName);
+        Assert.Equal(2, notices);
+        vm.Right.UseSctcPath = true; vm.Right.UseSctcPath = true;
+        Assert.Equal(3, notices);
     }
     [Fact]
     public void PresetConfirmationCanCancelWithoutChangingInputsAndMissingPathIsReported()
     {
         var calls = 0;
         var input = new DatInputViewModel("버전1", () => { calls++; return false; }, () => SctcDataKind.Run);
+        var notices = 0; input.ShowSctcNotice = () => notices++;
         input.UseSctcPath = true;
         Assert.False(input.UseSctcPath); Assert.Empty(input.Headers); Assert.Equal(1, calls);
+        Assert.Equal(0, notices);
         var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "missing.h");
         var custom = new DatInputViewModel("버전1", () => true, () => SctcDataKind.Run);
         custom.AddFiles(new[] { missing }); custom.StructName = "Root"; custom.DatPath = "missing.dat";
