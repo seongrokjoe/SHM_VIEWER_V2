@@ -31,6 +31,7 @@ public sealed partial class ViewerUiTests
             File.WriteAllBytes(pair.DatPath, pair.Item2.Data);
             File.WriteAllBytes(DatSchemaFile.PathFor(pair.DatPath), DatSchemaFile.Serialize(pair.Item2.Schema, pair.Item2.Data));
         }
+        diff.Left.UseSchemaFile = diff.Right.UseSchemaFile = true;
         using var vm = new MainViewModel(new MemoryStore(), _ => true, diff);
         var window = new MainWindow(vm) { Width = 1440, Height = 900, Left = -12000, Top = -12000, ShowActivated = false };
         var clock = Stopwatch.StartNew(); var last = clock.Elapsed; var largestGap = TimeSpan.Zero; var pulses = 0; var intervals = new List<double>(); var phase = "load"; var gaps = new List<string>(); var lastPause = GC.GetTotalPauseDuration(); var maxPublish = 0.0; var publishWatch = new Stopwatch();

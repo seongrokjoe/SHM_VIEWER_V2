@@ -74,7 +74,7 @@
    Background="#1E2023" Foreground="#DDD" BorderBrush="#444" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#3A3D42"
    HeadersVisibility="Column">
    <DataGrid.RowStyle><Style TargetType="DataGridRow">
-    <Setter Property="Background" Value="#242A32"/>
+    <Setter Property="Background" Value="{Binding RowBackground}"/>
     <Setter Property="BorderBrush" Value="{Binding StateColor}"/><Setter Property="BorderThickness" Value="3,0,0,0"/>
    </Style></DataGrid.RowStyle>
    <DataGrid.CellStyle><Style TargetType="DataGridCell">

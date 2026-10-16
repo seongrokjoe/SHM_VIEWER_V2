@@ -15,7 +15,10 @@ public sealed partial class DatDiffSession
 
     private MemberReplacement? FindMemberReplacement(DatDiffNode node, DatSourceVersion source, CancellationToken token)
     {
-        if (node.Parent == null || node.Left != null && node.Right != null) return null;
+        if (node.Parent == null) return null;
+        if (node.HasNameDifference)
+            return new(Keys(node.Parent), _comparison.Declaration(node, source)!, _comparison.Declaration(node, Opposite(source))!);
+        if (node.Left != null && node.Right != null) return null;
         var presentVersion = node.Field(source) != null ? source : Opposite(source);
         var present = node.Field(presentVersion);
         if (present == null || present.Type.IsContainer) return null;
@@ -44,6 +47,9 @@ public sealed partial class DatDiffSession
         var atOffset = candidates.Where(m => m.Offset == own.Offset).ToArray();
         var other = exact.Length == 1 ? exact[0] : candidates.Count == 1 ? candidates[0] : atOffset.Length == 1 ? atOffset[0] : null;
         if (other == null) throw new InvalidDataException("교체할 필드를 하나로 확정할 수 없습니다. 배열 전체 적용이 필요하면 배열 그룹을 직접 선택하세요.");
+        if (SameReplacementLayout(own, other) &&
+            _comparison.MemberPairing.Get(ownParent, otherParent, token).GetValueOrDefault(own.Name)?.Name != other.Name)
+            throw new InvalidDataException("주변 멤버 배치 또는 겹치는 메모리 영역 때문에 교체할 필드를 확정할 수 없습니다.");
         return presentVersion == source ? new(parentKeys, own, other) : new(parentKeys, other, own);
     }
 
@@ -59,21 +65,12 @@ public sealed partial class DatDiffSession
         return type;
     }
 
-    private static bool SameReplacementLayout(BinaryMember a, BinaryMember b) =>
-        a.Offset == b.Offset && a.BitWidth == 0 && b.BitWidth == 0 && !a.Type.IsContainer && !b.Type.IsContainer &&
-        a.Type.Kind != BinaryKind.Array && b.Type.Kind != BinaryKind.Array &&
-        a.ExplicitAlignment == b.ExplicitAlignment && a.IsAnonymous == b.IsAnonymous && DatSchemaFile.SameLayout(a.Type, b.Type);
+    private static bool SameReplacementLayout(BinaryMember a, BinaryMember b) => DatMemberPairing.SameLayout(a, b);
 
     private static void EnsureIndependentMember(BinaryType parent, BinaryMember selected)
     {
-        var start = (long)selected.Offset; var end = start + selected.Type.Size;
-        foreach (var member in parent.Members)
-        {
-            if (member.IsPadding || member.Name == selected.Name) continue;
-            var size = member.BitWidth > 0 ? (member.BitOffset + member.BitWidth + 7) / 8 : member.Type.Size;
-            if (member.Offset < end && (long)member.Offset + size > start)
-                throw new InvalidDataException("다른 멤버와 메모리 영역이 겹쳐 값을 보존하며 교체할 수 없습니다: " + selected.Name);
-        }
+        if (!DatMemberPairing.Independent(parent, selected))
+            throw new InvalidDataException("다른 멤버와 메모리 영역이 겹쳐 값을 보존하며 교체할 수 없습니다: " + selected.Name);
     }
 
     private DatApplyPlan? PreviewMemberReplacement(string[] paths, DatSourceVersion sourceVersion, CancellationToken token)

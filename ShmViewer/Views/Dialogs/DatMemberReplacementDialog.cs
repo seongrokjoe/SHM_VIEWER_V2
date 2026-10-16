@@ -23,6 +23,9 @@ public sealed class DatMemberReplacementDialog : Window
 
         var summary = new StringBuilder()
             .AppendLine($"적용 방향: {source} → {target}")
+            .AppendLine($"{target}의 {preview.TargetPattern} 전체 {preview.AffectedCount:N0}개를")
+            .AppendLine($"{preview.SourcePattern}으로 변경하고, 각 원소의 해당 값을 {source}에서 복사합니다.")
+            .AppendLine()
             .AppendLine($"소스 필드: {preview.SourcePattern}")
             .AppendLine($"교체할 대상 필드: {preview.TargetPattern}")
             .AppendLine($"자료형: {preview.TypeName} · {preview.Size:N0} bytes · 부모 기준 오프셋 +{preview.RelativeOffset:N0}")

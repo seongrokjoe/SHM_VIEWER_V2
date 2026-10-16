@@ -17,11 +17,14 @@ internal sealed class DatComparisonIndex
     public DatDiffNode Root { get; }
     public List<DatDiffNode> Nodes { get; } = new();
     public Dictionary<string, DatDiffNode> ByPath { get; } = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DatDiffNode> _aliases = new(StringComparer.Ordinal);
+    internal DatMemberPairing MemberPairing { get; } = new();
+    internal DatDiffNode? Find(string path) => ByPath.GetValueOrDefault(path) ?? _aliases.GetValueOrDefault(path);
     private readonly Dictionary<BinaryType, string> _signatures = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<BinaryType, Dictionary<string, BinaryMember>> _members = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<(BinaryType, BinaryType), bool> _layouts = new();
     private readonly Dictionary<(BinaryType, BinaryType), bool> _copyTypes = new();
-    private readonly Dictionary<(BinaryType?, BinaryType?), (string Key, BinaryMember? Left, BinaryMember? Right)[]> _childPairs = new();
+    private readonly Dictionary<(BinaryType?, BinaryType?, bool), (string Key, BinaryMember? Left, BinaryMember? Right)[]> _childPairs = new();
     private readonly Dictionary<(BinaryType, BinaryType), bool> _paddingPairs = new();
     private readonly IntervalIndex _leftIntervals, _rightIntervals;
     public DatComparisonIndex(DatDocument left, DatDocument right, CancellationToken token)
@@ -58,7 +61,8 @@ internal sealed class DatComparisonIndex
         return members;
     }
     internal BinaryMember? Declaration(DatDiffNode node, DatSourceVersion version) =>
-        node.Parent?.Field(version) is { } parent ? Members(parent.Type).GetValueOrDefault(node.Key) : null;
+        node.Parent?.Field(version) is { } parent && node.Field(version) is { } field
+            ? Members(parent.Type).GetValueOrDefault(DatDiffSession.Key(parent, field)) : null;
 
     private DatDiffNode Build(BinaryField? a, BinaryField? b, DatDiffNode? parent, string key,
         DatDocument left, DatDocument right, CancellationToken token)
@@ -67,6 +71,7 @@ internal sealed class DatComparisonIndex
         var node = new DatDiffNode { Path = a?.Path ?? b!.Path,
             Key = key, Parent = parent, Left = a, Right = b, IsExpanded = parent == null, Order = Nodes.Count };
         Nodes.Add(node); ByPath.Add(node.Path, node);
+        if (b != null && b.Path != node.Path) _aliases.Add(b.Path, node);
         if (a?.IsContainer == true || b?.IsContainer == true) BuildChildren(node, a, b, left, right, token);
         var kinds = DatDifferenceKind.None;
         var structural = string.Empty;
@@ -74,6 +79,7 @@ internal sealed class DatComparisonIndex
         if (a == null || b == null) Add(a == null ? DatDifferenceKind.RightOnly : DatDifferenceKind.LeftOnly, a == null ? "버전2만" : "버전1만");
         else
         {
+            if (a.Path != b.Path) Add(DatDifferenceKind.Name, "동일 배치 · 이름 다름");
             if (a.ByteLength != b.ByteLength) Add(DatDifferenceKind.Size, $"크기 차이: {a.ByteLength:N0} → {b.ByteLength:N0} B");
             if (a.Type.Kind != b.Type.Kind || !a.IsContainer && (a.BitWidth != b.BitWidth || Signature(a.Type) != Signature(b.Type))) Add(DatDifferenceKind.Type, "타입 차이");
             var memberKeysEqual = a.Type.Kind == BinaryKind.Array && b.Type.Kind == BinaryKind.Array
@@ -119,19 +125,30 @@ internal sealed class DatComparisonIndex
         }
         if (!aa && !ba)
         {
-            if (!_childPairs.TryGetValue((a?.Type, b?.Type), out var pairs))
+            var inArray = false; var inUnion = false;
+            for (var ancestor = node; ancestor != null; ancestor = ancestor.Parent)
+            {
+                inArray |= ancestor.Left?.Type.Kind == BinaryKind.Array || ancestor.Right?.Type.Kind == BinaryKind.Array;
+                inUnion |= ancestor.Left?.Type.Kind == BinaryKind.Union || ancestor.Right?.Type.Kind == BinaryKind.Union;
+            }
+            var pairNames = inArray && !inUnion && a != null && b != null;
+            if (!_childPairs.TryGetValue((a?.Type, b?.Type, pairNames), out var pairs))
             {
                 var am = a == null ? new Dictionary<string, BinaryMember>() : Members(a.Type);
                 var bm = b == null ? new Dictionary<string, BinaryMember>() : Members(b.Type);
-                pairs = am.Keys.Concat(bm.Keys).Distinct(StringComparer.Ordinal).Select(k => (k, am.GetValueOrDefault(k), bm.GetValueOrDefault(k))).ToArray();
-                _childPairs.Add((a?.Type, b?.Type), pairs);
+                var renamed = pairNames ? MemberPairing.Get(a!.Type, b!.Type, token) : new Dictionary<string, BinaryMember>();
+                var matchedRight = renamed.Values.Select(m => m.Name).ToHashSet(StringComparer.Ordinal);
+                pairs = am.Keys.Select(k => (k, (BinaryMember?)am[k], bm.GetValueOrDefault(k) ?? renamed.GetValueOrDefault(k)))
+                    .Concat(bm.Keys.Where(k => !am.ContainsKey(k) && !matchedRight.Contains(k)).Select(k => (k, (BinaryMember?)null, (BinaryMember?)bm[k]))).ToArray();
+                _childPairs.Add((a?.Type, b?.Type, pairNames), pairs);
             }
             node.Children.EnsureCapacity(pairs.Length);
             foreach (var (key, am, bm) in pairs)
             {
-                var path = DatDiffSession.Join(node.Path, key);
-                var ac = am == null ? null : new BinaryField(path, am.Type, checked(a!.Offset + am.Offset), am.BitOffset, am.BitWidth);
-                var bc = bm == null ? null : new BinaryField(path, bm.Type, checked(b!.Offset + bm.Offset), bm.BitOffset, bm.BitWidth);
+                var ap = am == null ? null : DatDiffSession.Join(a!.Path, am.Name);
+                var bp = bm == null ? null : am?.Name == bm.Name && a!.Path == b!.Path ? ap : DatDiffSession.Join(b!.Path, bm.Name);
+                var ac = am == null ? null : new BinaryField(ap!, am.Type, checked(a!.Offset + am.Offset), am.BitOffset, am.BitWidth);
+                var bc = bm == null ? null : new BinaryField(bp!, bm.Type, checked(b!.Offset + bm.Offset), bm.BitOffset, bm.BitWidth);
                 node.Children.Add(Build(ac, bc, node, key, left, right, token));
             }
             return;

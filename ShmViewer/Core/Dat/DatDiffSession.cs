@@ -54,6 +54,7 @@ public sealed class DatDiffNode
     public int DifferenceCount { get; internal set; }
     public int StructureDifferenceCount { get; internal set; }
     public string Difference { get; internal set; } = string.Empty;
+    public bool HasNameDifference => (DifferenceKinds & DatDifferenceKind.Name) != 0;
     public BinaryField? Field(DatSourceVersion version) => version == DatSourceVersion.Version1 ? Left : Right;
 }
 
@@ -99,13 +100,13 @@ public sealed partial class DatDiffSession
     { Left = new(left); Right = new(right); _comparison = new(left, right, token); }
     public DatVersionState Version(DatSourceVersion version) => version == DatSourceVersion.Version1 ? Left : Right;
     public static DatSourceVersion Opposite(DatSourceVersion version) => version == DatSourceVersion.Version1 ? DatSourceVersion.Version2 : DatSourceVersion.Version1;
-    internal DatDiffNode? Node(string path) => _comparison.ByPath.GetValueOrDefault(path);
+    internal DatDiffNode? Node(string path) => _comparison.Find(path);
     internal static IEnumerable<BinaryField> Fields(BinaryField root)
     {
         yield return root;
         foreach (var child in root.Children()) foreach (var field in Fields(child)) yield return field;
     }
-    public BinaryField? Field(DatSourceVersion version, string path) => Node(path)?.Field(version);
+    public BinaryField? Field(DatSourceVersion version, string path) => Node(path)?.Field(version) is { } field && field.Path == path ? field : null;
     internal static string Key(BinaryField parent, BinaryField child) => child.Path[parent.Path.Length..].TrimStart('.');
     internal static string Join(string parent, string key) => parent.Length == 0 ? key : parent + (key.StartsWith('[') ? "" : ".") + key;
     internal static bool IsWithin(string path, string parent) => path == parent || parent.Length == 0 || path.StartsWith(parent + ".", StringComparison.Ordinal) || path.StartsWith(parent + "[", StringComparison.Ordinal);
@@ -124,6 +125,7 @@ public sealed partial class DatDiffSession
     {
         var selected = TopLevel(paths);
         if (selected.Any(p => Node(p) == null)) throw new InvalidDataException("선택한 항목을 다시 선택하세요.");
+        selected = TopLevel(selected.Select(p => Node(p)!.Path));
         selected = selected.OrderBy(p => Node(p)!.Order).ToArray();
         if (PreviewMemberReplacement(selected, source, token) is { } replacement) return replacement;
         var expanded = new List<string>();

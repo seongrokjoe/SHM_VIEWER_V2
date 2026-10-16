@@ -35,14 +35,14 @@ public partial class DatDiffView : UserControl
     private void ComparisonGrid_UnloadingRow(object sender, DataGridRowEventArgs e)
     { if (e.Row.Item is DatRowViewModel row) row.Owner.UnrealizeRow(row); }
     private void ScrollTo(DatRowViewModel row) => ComparisonGrid.ScrollIntoView(row);
-    private string? _scrollAnchor;
+    private DatRowViewModel? _scrollAnchor;
     private double _verticalOffset, _horizontalOffset;
     private void CaptureGridState()
     {
         var scroll = FindVisual<ScrollViewer>(ComparisonGrid);
         _verticalOffset = scroll?.VerticalOffset ?? 0;
         _horizontalOffset = scroll?.HorizontalOffset ?? 0;
-        _scrollAnchor = _viewModel?.Rows.ElementAtOrDefault((int)_verticalOffset)?.Node.Path;
+        _scrollAnchor = _viewModel?.Rows.ElementAtOrDefault((int)_verticalOffset);
     }
     private void RestoreGridState()
     {
@@ -54,7 +54,7 @@ public partial class DatDiffView : UserControl
         foreach (var path in selected)
             if (_viewModel.FindVisibleRow(path) is { } row && existing.Add(row)) ComparisonGrid.SelectedItems.Add(row);
         var scroll = FindVisual<ScrollViewer>(ComparisonGrid);
-        var anchor = _scrollAnchor == null ? null : _viewModel.FindVisibleRow(_scrollAnchor);
+        var anchor = _scrollAnchor == null ? null : _viewModel.FindVisibleRow(_scrollAnchor.Path);
         scroll?.ScrollToVerticalOffset(anchor == null ? _verticalOffset : _viewModel.Rows.IndexOf(anchor));
         scroll?.ScrollToHorizontalOffset(_horizontalOffset);
     }

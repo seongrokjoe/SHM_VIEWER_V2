@@ -242,18 +242,24 @@ public sealed class DatMemberReplacementTests(ITestOutputHelper output)
         Assert.Equal(0, session.Root.DifferenceCount); session.Undo(); Assert.False(session.Left.IsDirty);
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(20_000)]
+    [InlineData(100_000)]
     [Trait("Category", "Performance")]
-    public void HundredThousandElementsUseBoundedPreviewAndPreserveNeighborBytes()
+    public void LargeArraysUseCachedPairingBoundedPreviewAndPreserveNeighborBytes(int count)
     {
-        const int count = 100_000;
         var leftSchema = DatBinaryTests.Parse($"struct Fix {{ short nSpare; int kept; }}; struct Root {{ Fix items[{count}]; }};");
         var rightSchema = DatBinaryTests.Parse($"struct Fix {{ short RefillOn; int kept; }}; struct Root {{ Fix items[{count}]; }};");
+        var timer = Stopwatch.StartNew();
         var session = new DatDiffSession(new("", leftSchema, Enumerable.Repeat((byte)0x55, leftSchema.Root.Size).ToArray()),
             new("", rightSchema, Enumerable.Repeat((byte)0x33, rightSchema.Root.Size).ToArray()));
-        var timer = Stopwatch.StartNew();
+        var load = timer.Elapsed.TotalMilliseconds;
+        Assert.Equal(1, session.Comparison.MemberPairing.CachedTypePairs);
+        Assert.Equal(count, session.Nodes.Count(n => n.HasNameDifference));
+        Assert.Equal(count * 3 + 2, session.Nodes.Count);
+        timer.Restart();
         var plan = session.PreviewApply(new[] { "items[0].RefillOn" }, Version2);
-        output.WriteLine($"100,000-element replacement preparation: {timer.Elapsed.TotalMilliseconds:F1} ms");
+        output.WriteLine($"{count:N0}-element comparison: {load:F1} ms; replacement preparation: {timer.Elapsed.TotalMilliseconds:F1} ms");
         Assert.Equal(count, plan.MemberReplacement!.AffectedCount); Assert.Equal(count, plan.MemberReplacement.ChangedValueCount);
         Assert.Equal(20, plan.MemberReplacement.Samples.Count);
         session.Apply(plan);

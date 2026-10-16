@@ -303,18 +303,18 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     }
     [RelayCommand(CanExecute = nameof(CanRemoveSelection))] private Task Remove()
     {
-        var paths = Selection().Select(n => n.Path).ToArray(); var version = ActiveVersion;
+        var version = ActiveVersion; var paths = Selection().Select(n => n.Field(version)?.Path ?? n.Path).ToArray();
         return RunEditAsync((s, t) => RunBackground<DatPreparedChange?>(() => s.PrepareRemove(version, paths, t), t), failureTitle: "삭제 실패");
     }
     [RelayCommand(CanExecute = nameof(HasTargetSelection))] private Task SetZero()
     {
-        var paths = Selection().Select(n => n.Path).ToArray(); var version = ActiveVersion;
+        var version = ActiveVersion; var paths = Selection().Select(n => n.Field(version)?.Path ?? n.Path).ToArray();
         return RunEditAsync((s, t) => RunBackground<DatPreparedChange?>(() => s.PrepareSetZero(version, paths, t), t), failureTitle: "값 초기화 실패");
     }
     [RelayCommand(CanExecute = nameof(HasTargetSelection))] private Task ApplyValue()
     {
         if (SelectedRow?.CanEditValue != true) return Task.CompletedTask;
-        var path = SelectedRow.Node.Path; var version = ActiveVersion; var text = EditorText; var encoding = EncodingName;
+        var version = ActiveVersion; var path = SelectedRow.Node.Field(version)!.Path; var text = EditorText; var encoding = EncodingName;
         return RunEditAsync((s, t) => RunBackground<DatPreparedChange?>(() => s.PrepareSetValue(version, path, text, encoding, t), t), applyEditor: true);
     }
     [RelayCommand(CanExecute = nameof(CanEdit))] private void CancelEdit() => LoadEditor();

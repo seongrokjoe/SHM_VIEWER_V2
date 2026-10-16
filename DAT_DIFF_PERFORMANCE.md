@@ -59,4 +59,25 @@ dotnet test ShmViewer.Tests/ShmViewer.Tests.csproj -c Release --filter "Category
 
 DatPerformanceTests는 2만·10만 차이의 단일 적용, 배열 구조 적용, 넓은 구조체의 일괄 적용을 워밍업 후 3회 측정한다. ViewerUiPerformanceTests는 실제 화면 응답과 행 생성 수를 측정한다. 절대 시간은 머신과 실행 상태에 따라 달라지므로 동일 조건의 수치로 비교한다.
 
+## 이름 변경 대응 행 검증 (2026-10-16)
+
+`short nSpare`와 `short RefillOn`을 같은 행에 연결하는 비교·적용·실행 취소를 검증했다. 대응 판별은 배열 원소마다 반복하지 않고 타입 쌍별로 캐시한다. 아래 자료의 타입 쌍 판별은 원소 수와 관계없이 한 번이다. 교체 미리보기는 최대 20개만 생성하며, 나머지 필드와 패딩 보존은 전체 바이트로 검사한다.
+
+행 수와 위치가 같은 이름 변경은 목록 Reset 없이 반영한다. Reset 시 WPF가 선택 항목까지 순회해 10만 원소에서 약 15만 개 행 모델을 생성하던 현상을 제거했다. 양방향 셀 편집, 확인창 취소/적용, 선택·스크롤 유지, 실행 취소를 실제 WPF 창에서 검증하고 `dat-member-paired-before.png`, `dat-member-replacement-result.png`, `dat-member-paired-undo.png`를 렌더링했다.
+
+최종 Release의 이름 변경 시나리오 1회 측정값이다. 로드는 구조 파일 읽기와 비교를, 적용은 모든 대응 원소의 필드 교체와 목록 준비·반영을 포함하며 사용자의 확인 대기 시간은 제외한다. 첫 실행 비용을 포함하므로 위 워밍업 후 중앙값과 직접 비교하지 않는다.
+
+| 배열 원소 | 표시 행 | 로드 | 전체 대응 필드 적용 | 적용/취소 후 캐시 행 | 실제 화면 행 |
+|---:|---:|---:|---:|---:|---:|
+| 20,000 | 60,002 | 438.8 ms | 715.3 ms | 10 | 6 |
+| 100,000 | 300,002 | 1,857.9 ms | 3,649.4 ms | 10 | 6 |
+
+작업 중 Dispatcher 타이머가 계속 실행되고 적용·실행 취소 시 컬렉션 Reset이 없음을 검사한다. 이 검증은 모든 구간의 최대 응답 지연 100ms를 보장하지 않는다. 기존 대용량 화면 검사에서는 최대 지연 약 479ms도 관찰되어 위 제한은 유지된다.
+
+Debug 빌드 경고·오류 0개, 기능·화면 회귀 213개, Release 성능 검사 12개를 통과했다. 마지막 경로 문자열 공유 개선 후 이름 변경 성능 검사 4개를 다시 통과했다. 기존 화면 성능 테스트는 생성한 구조 파일을 사용하도록 `UseSchemaFile`을 명시해 현재의 헤더 기본 로드 정책에 맞췄다.
+
+~~~powershell
+dotnet test ShmViewer.Tests/ShmViewer.Tests.csproj -c Release --filter "FullyQualifiedName~LargeArraysUseCachedPairing|FullyQualifiedName~LargePairedRowsKeepVirtualization" --logger "console;verbosity=detailed"
+~~~
+
 로컬 기준선 CSV, 개선 후 CSV, 100만 차이 CSV와 격리 측정 도구는 ShmViewer/obj/dat-performance/에 생성했다. WPF 검증 이미지는 ShmViewer/obj/render-qa/에 생성한다. 모두 빌드 산출물이며 커밋 대상이 아니다.
