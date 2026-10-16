@@ -62,6 +62,8 @@ public sealed record DatApplyPlan(DatSourceVersion Source, IReadOnlyList<string>
     private readonly DatSourceVersion _originalSource = Source;
     private readonly IReadOnlyList<string> _originalPaths = Paths;
     internal bool HasOriginalSelection => Source == _originalSource && ReferenceEquals(Paths, _originalPaths);
+    public DatMemberReplacementPreview? MemberReplacement { get; internal init; }
+    public bool RequiresConfirmation => MemberReplacement != null || ExpandedScopes.Count > 0;
     internal DatPreparedChange? Prepared { get; init; }
 }
 
@@ -80,7 +82,7 @@ internal sealed class DatPreparedChange
     internal bool IsNoop => ReferenceEquals(Left, Owner.Left.Current) && ReferenceEquals(Right, Owner.Right.Current) && !ResetHistory && HistoryDirection == 0;
 }
 
-public sealed class DatDiffSession
+public sealed partial class DatDiffSession
 {
     public DatVersionState Left { get; }
     public DatVersionState Right { get; }
@@ -123,6 +125,7 @@ public sealed class DatDiffSession
         var selected = TopLevel(paths);
         if (selected.Any(p => Node(p) == null)) throw new InvalidDataException("선택한 항목을 다시 선택하세요.");
         selected = selected.OrderBy(p => Node(p)!.Order).ToArray();
+        if (PreviewMemberReplacement(selected, source, token) is { } replacement) return replacement;
         var expanded = new List<string>();
         for (var attempts = 0; attempts <= Nodes.Count; attempts++)
         {
@@ -151,7 +154,8 @@ public sealed class DatDiffSession
     public void Apply(IEnumerable<string> paths, DatSourceVersion source, CancellationToken token = default)
     {
         var plan = PreviewApply(paths, source, token);
-        if (plan.ExpandedScopes.Count > 0) throw new InvalidDataException("상위 구조 전체 적용 확인이 필요합니다.");
+        if (plan.RequiresConfirmation) throw new InvalidDataException(plan.MemberReplacement != null
+            ? "필드 교체 영향 범위 확인이 필요합니다." : "상위 구조 전체 적용 확인이 필요합니다.");
         Apply(plan, token);
     }
 

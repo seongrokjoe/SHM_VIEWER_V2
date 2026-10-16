@@ -22,9 +22,10 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     private bool _loadOnly;
     private bool _viewerUsesLeft = true;
     private DatViewerNode? _viewerRoot;
-    private const string InitialStatus = "버전1·2의 DAT를 선택하세요. 구조 파일을 자동으로 읽으며, 없으면 지정한 헤더·Struct를 사용합니다.";
+    private const string InitialStatus = "버전1·2의 DAT와 헤더·Struct를 지정하세요. 저장된 구조 파일로 열려면 '자동 구조 파일 사용'을 켜세요.";
     public Action<DatSaveResult, string> ShowSaveNotice { get; set; } = DatSaveDialog.Show;
     public Action<string, string> ShowErrorNotice { get; set; } = UserNotice.ShowError;
+    public Func<DatApplyPlan, bool> ConfirmMemberReplacement { get; set; } = DatMemberReplacementDialog.Confirm;
     public DatFileStore FileStore { get; set; } = new();
     public bool LoadOnly
     {
@@ -291,6 +292,10 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
             if (paths.Length == 0) return null;
             var plan = await RunBackground(() => session.PreviewApply(paths, source, token), token);
             token.ThrowIfCancellationRequested();
+            if (plan.MemberReplacement != null)
+            {
+                if (!ConfirmMemberReplacement(plan)) { Status = "필드 교체를 취소했습니다."; return null; }
+            }
             if (plan.ExpandedScopes.Count > 0 && !_confirm("개별 적용으로는 배열·union 등의 구조를 유지할 수 없습니다.\n다음 그룹의 구조와 모든 값을 소스와 일치시킵니다:\n" +
                 string.Join("\n", plan.ExpandedScopes.Distinct().Select(p => p.Length == 0 ? "전체 구조체" : p)) + "\n\n전체 범위를 적용하시겠습니까?")) return null;
             return plan.Prepared;
