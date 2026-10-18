@@ -574,11 +574,11 @@
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Grid.Column="0"
-                           Text="SHM_Viewer_v1.0_20260310 / 동작 전 struct 크기 확인 필수...!!"
+                           Text="동작 전 struct 크기 확인 필수...!!"
                            HorizontalAlignment="Left"
                            Foreground="#DCDCAA"/>
                 <TextBlock Grid.Column="1"
-                           Text="Bug Report : sr.joe"
+                           Text=""
                            HorizontalAlignment="Right"
                            Foreground="#9CDCFE"/>
             </Grid>

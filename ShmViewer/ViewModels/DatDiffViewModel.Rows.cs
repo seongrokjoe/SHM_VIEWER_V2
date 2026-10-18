@@ -17,7 +17,9 @@ public partial class DatDiffViewModel
     private SortedSet<int> _differenceOrder = new();
     private IReadOnlyList<DatDiffNode> _orderedDisplay = Array.Empty<DatDiffNode>();
     private int _maxRowDepth;
-    internal sealed record RowPresentation(bool[] Branches, bool HasChildren, int Index);
+    internal bool IsResettingRows { get; private set; }
+    internal sealed record RowPresentation(bool[] Branches, bool HasChildren, int Index,
+        bool[] LeftBranches, bool[] RightBranches, bool LeftHasChildren, bool RightHasChildren);
     private sealed record RowsSnapshot(DatDiffNode? Root, Dictionary<string, DatDiffNode> Nodes,
         Dictionary<string, RowPresentation> Presentation,
         HashSet<string> Retained, HashSet<string> Expanded, List<string> Paths, bool RowsChanged, IReadOnlyList<DatDiffNode> Ordered,
@@ -128,7 +130,6 @@ public partial class DatDiffViewModel
             if (expanded.Remove(before)) expanded.Add(after);
         }
         if ((fresh || _displayRoot == null) && comparison != null) expanded.Add(comparison.Root.Path);
-        if (togglePath != null) { if (toggleExpanded) expanded.Add(togglePath); else expanded.Remove(togglePath); }
         if (expandPaths != null) foreach (var path in expandPaths) expanded.Add(path);
         var paths = new List<string>(); var differences = new SortedSet<int>(); var maxDepth = 0;
         var editingPath = fresh ? null : CellEditTarget is DatCellTarget target ? comparison?.Find(target.Path)?.Path : HasPendingEdit ? _selectedRow?.Node.Path : null;
@@ -139,20 +140,38 @@ public partial class DatDiffViewModel
                 for (var parent = node.Parent; parent != null; parent = parent.Parent) expanded.Add(parent.Path);
             if (Matches(node) && (mode == DatComparisonMode.StructureDifferences ? State(node).ChildStructureDifferences : State(node).ChildDifferences) == 0) differences.Add(i);
         }
+        if (togglePath != null) { if (toggleExpanded) expanded.Add(togglePath); else expanded.Remove(togglePath); }
         bool Visible(DatDiffNode node) => mode == DatComparisonMode.All || retained.Contains(node.Path) || editingPath != null && DatDiffSession.IsWithin(editingPath, node.Path);
-        void Add(DatDiffNode node, bool[] branches)
+        static bool[] AppendBranch(bool[] ancestors, bool hasNext)
+        {
+            var result = new bool[ancestors.Length + 1];
+            ancestors.CopyTo(result, 0); result[^1] = hasNext; return result;
+        }
+        void Add(DatDiffNode node, bool[] branches, bool[] leftBranches, bool[] rightBranches)
         {
             token.ThrowIfCancellationRequested();
             if (!Visible(node)) return;
             var allChildren = children.GetValueOrDefault(node.Path) ?? node.Children;
             var visibleChildren = allChildren.Count == 0 ? Array.Empty<DatDiffNode>() : allChildren.Where(Visible).ToArray();
             if (editingPath != null && editingPath != node.Path && DatDiffSession.IsWithin(editingPath, node.Path)) expanded.Add(node.Path);
-            presentation.Add(node.Path, new(branches, visibleChildren.Length > 0, paths.Count)); paths.Add(node.Path); maxDepth = Math.Max(maxDepth, node.Depth);
+            var lastLeft = Array.FindLastIndex(visibleChildren, child => child.Left != null);
+            var lastRight = Array.FindLastIndex(visibleChildren, child => child.Right != null);
+            presentation.Add(node.Path, new(branches, visibleChildren.Length > 0, paths.Count,
+                leftBranches, rightBranches, lastLeft >= 0, lastRight >= 0));
+            paths.Add(node.Path); maxDepth = Math.Max(maxDepth, node.Depth);
             if (expanded.Contains(node.Path))
-                for (var i = 0; i < visibleChildren.Length; i++) Add(visibleChildren[i], branches.Append(i < visibleChildren.Length - 1).ToArray());
+                for (var i = 0; i < visibleChildren.Length; i++)
+                {
+                    var child = visibleChildren[i]; var hasNext = i < visibleChildren.Length - 1;
+                    var nextBranches = AppendBranch(branches, hasNext);
+                    // Most rows share the same guides on both sides; reuse their immutable arrays.
+                    bool[] Side(bool exists, bool[] ancestors, int last) => !exists ? Array.Empty<bool>() :
+                        ReferenceEquals(ancestors, branches) && (i < last) == hasNext ? nextBranches : AppendBranch(ancestors, i < last);
+                    Add(child, nextBranches, Side(child.Left != null, leftBranches, lastLeft), Side(child.Right != null, rightBranches, lastRight));
+                }
         }
         var root = comparison?.Root;
-        if (root != null) Add(root, Array.Empty<bool>());
+        if (root != null) Add(root, Array.Empty<bool>(), Array.Empty<bool>(), Array.Empty<bool>());
         // A rename keeps the same row objects at the same indices. Resetting here makes WPF scan
         // the entire prefix to relocate selected items, materializing thousands of virtual rows.
         var previousPaths = renamed.ToDictionary(p => p.Value, p => p.Key, StringComparer.Ordinal);
@@ -168,6 +187,7 @@ public partial class DatDiffViewModel
         _rebuildingRows = true;
         try
         {
+            IsResettingRows = snapshot.RowsChanged;
             RowsUpdating?.Invoke();
             foreach (var (path, reference) in _rowCache.ToArray())
                 if (snapshot.RenamedPaths.TryGetValue(path, out var nextPath))
@@ -185,7 +205,7 @@ public partial class DatDiffViewModel
             _selectedRow = selectedPath == null ? null : FindVisibleRow(selectedPath);
             RefreshRealizedRows(); OnPropertyChanged(nameof(SelectedRow)); RowsUpdated?.Invoke();
         }
-        finally { _rebuildingRows = false; }
+        finally { IsResettingRows = false; _rebuildingRows = false; }
         NotifyState();
     }
     private void PublishValueChanges(DatPreparedChange change)

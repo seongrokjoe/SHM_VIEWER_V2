@@ -43,6 +43,9 @@ public partial class DatDiffView : UserControl
         _verticalOffset = scroll?.VerticalOffset ?? 0;
         _horizontalOffset = scroll?.HorizontalOffset ?? 0;
         _scrollAnchor = _viewModel?.Rows.ElementAtOrDefault((int)_verticalOffset);
+        // WPF otherwise scans rows to relocate selected items after Reset, defeating virtualization.
+        // The view-model keeps the selection paths and restores the visible selection below.
+        if (_viewModel?.IsResettingRows == true) ComparisonGrid.UnselectAll();
     }
     private void RestoreGridState()
     {
@@ -50,11 +53,15 @@ public partial class DatDiffView : UserControl
         var selected = _viewModel.SelectedNodes.Select(n => n.Path).ToHashSet(StringComparer.Ordinal);
         foreach (var row in ComparisonGrid.SelectedItems.OfType<DatRowViewModel>().ToArray())
             if (!selected.Contains(row.Node.Path) && row != _viewModel.SelectedRow) ComparisonGrid.SelectedItems.Remove(row);
+        if (_viewModel.IsResettingRows && _viewModel.SelectedRow is { } primary)
+            ComparisonGrid.SelectedIndex = _viewModel.Rows.IndexOf(primary);
         var existing = ComparisonGrid.SelectedItems.OfType<DatRowViewModel>().ToHashSet();
         foreach (var path in selected)
             if (_viewModel.FindVisibleRow(path) is { } row && existing.Add(row)) ComparisonGrid.SelectedItems.Add(row);
         var scroll = FindVisual<ScrollViewer>(ComparisonGrid);
         var anchor = _scrollAnchor == null ? null : _viewModel.FindVisibleRow(_scrollAnchor.Path);
+        for (var parent = _scrollAnchor?.Node.Parent; anchor == null && parent != null; parent = parent.Parent)
+            anchor = _viewModel.FindVisibleRow(parent.Path);
         scroll?.ScrollToVerticalOffset(anchor == null ? _verticalOffset : _viewModel.Rows.IndexOf(anchor));
         scroll?.ScrollToHorizontalOffset(_horizontalOffset);
     }

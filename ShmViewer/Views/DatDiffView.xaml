@@ -3,7 +3,8 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:views="clr-namespace:ShmViewer.Views"
  xmlns:vm="clr-namespace:ShmViewer.ViewModels"
- xmlns:local="clr-namespace:ShmViewer">
+ xmlns:local="clr-namespace:ShmViewer"
+ xmlns:dat="clr-namespace:ShmViewer.Core.Dat">
  <Grid Background="#1E2023">
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <ScrollViewer x:Name="InputScroller" Grid.Row="0" MaxHeight="310" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" IsEnabled="{Binding CanInteract}">
@@ -89,8 +90,8 @@
     <DataGridTemplateColumn Header="버전1 · 값 더블클릭 / F2" Width="*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
      <Border Background="{Binding LeftBackground}" BorderBrush="#8A9BAE" BorderThickness="0,0,2,0" Padding="6,0" MinHeight="86">
       <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-       <views:DatTreeBranch Grid.Column="1" IsMirrored="True"/>
-       <StackPanel Margin="0,6"><TextBlock Text="{Binding LeftPath}" ToolTip="{Binding LeftPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0" TextAlignment="Right"/>
+       <views:DatTreeBranch Grid.Column="1" IsMirrored="True" Version="{x:Static dat:DatSourceVersion.Version1}"/>
+       <StackPanel Margin="0,6"><TextBlock Text="{Binding LeftPath}" ToolTip="{Binding LeftPath}" TextDecorations="{Binding PathTextDecorations}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0" TextAlignment="Right"/>
         <TextBlock Text="{Binding LeftType}" Foreground="{Binding TypeColor}" FontSize="11" TextTrimming="CharacterEllipsis" TextAlignment="Right"/>
         <WrapPanel HorizontalAlignment="Right"><TextBlock Text="{Binding LeftSize}" Foreground="{Binding SizeColor}" FontWeight="SemiBold" FontSize="11"/><TextBlock Text="{Binding LeftDetail}" Foreground="#AAB6C5" FontSize="11" Margin="8,0,0,0"/></WrapPanel>
         <views:DatValueCell DataContext="{Binding LeftCell}" Foreground="{Binding ValueColor}" ValueTextAlignment="Right"/>
@@ -111,8 +112,8 @@
      <Border Background="{Binding RightBackground}" BorderBrush="#8A9BAE" BorderThickness="0,0,2,0" Padding="6,0" MinHeight="86">
       <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
 
-       <views:DatTreeBranch/>
-       <StackPanel Grid.Column="1" Margin="0,6"><TextBlock Text="{Binding RightPath}" ToolTip="{Binding RightPath}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
+       <views:DatTreeBranch Version="{x:Static dat:DatSourceVersion.Version2}"/>
+       <StackPanel Grid.Column="1" Margin="0,6"><TextBlock Text="{Binding RightPath}" ToolTip="{Binding RightPath}" TextDecorations="{Binding PathTextDecorations}" TextTrimming="CharacterEllipsis" Foreground="#E4DFC0"/>
         <TextBlock Text="{Binding RightType}" Foreground="{Binding TypeColor}" FontSize="11" TextTrimming="CharacterEllipsis"/>
         <WrapPanel><TextBlock Text="{Binding RightDetail}" Foreground="#AAB6C5" FontSize="11" Margin="0,0,8,0"/><TextBlock Text="{Binding RightSize}" Foreground="{Binding SizeColor}" FontWeight="SemiBold" FontSize="11"/></WrapPanel>
         <views:DatValueCell DataContext="{Binding RightCell}" Foreground="{Binding ValueColor}"/>

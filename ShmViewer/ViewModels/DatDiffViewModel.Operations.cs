@@ -72,9 +72,9 @@ public partial class DatDiffViewModel
         var session = Session; var token = BeginOperation("비교 목록 준비 중...");
         try
         {
-            var rows = await Task.Run(() => PrepareRows(session?.Comparison, ComparisonMode, token, togglePath: togglePath, toggleExpanded: toggleExpanded, expandPaths: expandPaths), token);
+            var rows = await RunBackground(() => PrepareRows(session?.Comparison, ComparisonMode, token, togglePath: togglePath, toggleExpanded: toggleExpanded, expandPaths: expandPaths), token);
             token.ThrowIfCancellationRequested();
-            if (!_disposed && Session == session) PublishRows(rows);
+            if (!_disposed && Session == session) { PublishRows(rows); UpdateSummary(); }
         }
         catch (OperationCanceledException) { Status = "목록 갱신을 취소했습니다."; }
         catch (Exception ex) { ReportFailure("목록 갱신 실패", ex); }

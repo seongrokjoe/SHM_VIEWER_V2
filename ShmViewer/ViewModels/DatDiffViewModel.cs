@@ -257,8 +257,17 @@ public partial class DatDiffViewModel : ObservableObject, IDisposable
     }
     [RelayCommand] private void ToggleViewer(DatViewerRowViewModel row)
     { if (CanInteract && LoadOnly) { row.Node.IsExpanded = !row.Node.IsExpanded; RebuildViewerRows(); } }
-    [RelayCommand(CanExecute = nameof(CanEdit))] private async Task Toggle(DatRowViewModel row)
-    { if (CanEdit) { row.Node.IsExpanded = !row.Node.IsExpanded; await RefreshRowsAsync(); } }
+    private bool CanToggleRow(DatRowViewModel? row) => CanEdit && row is { IsAbsent: false, HasVisibleChildren: true } &&
+        (row.Node.Left?.IsContainer == true || row.Node.Right?.IsContainer == true);
+    [RelayCommand(CanExecute = nameof(CanToggleRow))] private async Task Toggle(DatRowViewModel row)
+    {
+        if (!CanToggleRow(row)) return;
+        var expand = !IsExpanded(row.Path);
+        bool Hides(string path) => !expand && path != row.Path && DatDiffSession.IsWithin(path, row.Path);
+        if (CellEditTarget is DatCellTarget cell && Hides(Session!.Node(cell.Path)?.Path ?? cell.Path) && !await CommitCellEditAsync()) return;
+        if (_selectedRow != null && Hides(_selectedRow.Path) && !await SelectRowAsync(row)) return;
+        await RefreshRowsAsync(togglePath: row.Path, toggleExpanded: expand);
+    }
     [RelayCommand(CanExecute = nameof(CanEdit))] private Task NextDifference() => NavigateDifference(1);
     [RelayCommand(CanExecute = nameof(CanEdit))] private Task PreviousDifference() => NavigateDifference(-1);
     private async Task NavigateDifference(int direction)

@@ -20,7 +20,13 @@ public sealed class DatRowViewModel : ObservableObject, IDatValueRow
     public string EditableValue => ActiveCell.EditableValue;
     public bool[] TreeBranches => Owner.Presentation(Node.Path)?.Branches ?? Array.Empty<bool>();
     public bool HasVisibleChildren => Owner.Presentation(Node.Path)?.HasChildren == true;
+    public bool[] SideBranches(DatSourceVersion version) => (version == DatSourceVersion.Version1
+        ? Owner.Presentation(Path)?.LeftBranches : Owner.Presentation(Path)?.RightBranches) ?? Array.Empty<bool>();
+    public bool HasSideChildren(DatSourceVersion version) => (version == DatSourceVersion.Version1
+        ? Owner.Presentation(Path)?.LeftHasChildren : Owner.Presentation(Path)?.RightHasChildren) == true;
+    public bool CanToggleSide(DatSourceVersion version) => Node.Field(version)?.IsContainer == true && HasVisibleChildren;
     public bool IsAbsent => Node.Left == null && Node.Right == null;
+    public TextDecorationCollection? PathTextDecorations => IsAbsent ? TextDecorations.Strikethrough : null;
     internal void Rebind(string path)
     { Path = path; _absent = new() { Path = path }; }
     internal void Refresh()
