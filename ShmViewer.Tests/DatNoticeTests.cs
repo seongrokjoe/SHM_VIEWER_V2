@@ -13,7 +13,7 @@ public sealed class DatNoticeTests
     public async Task SizeMismatchShowsOneNoticeWithVersionAndKeepsExistingResults(bool loadOnly)
     {
         using var setup = new DatWorkspaceTests.Inputs(); var vm = setup.Model;
-        vm.LoadOnly = loadOnly;
+        vm.SingleLoad = loadOnly;
         await vm.DiffCommand.ExecuteAsync(null);
         var session = vm.Session; var document = vm.ViewerDocument;
         File.WriteAllBytes(vm.Left.DatPath, new byte[1]);

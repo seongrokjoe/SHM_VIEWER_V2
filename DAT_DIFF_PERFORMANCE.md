@@ -98,3 +98,29 @@ dotnet test ShmViewer.Tests/ShmViewer.Tests.csproj -c Release --filter "FullyQua
 전체 보기·구조 비교·차이점만 보기에서 실제 WPF 버튼 명령, 편집 입력 검증, 취소, 삭제 경로의 양쪽 취소선과 실행 취소·다시 실행을 검사한다. `dat-tree-missing-side.png`와 `dat-tree-deleted-paths.png`에서 빈 쪽의 모든 연결선 숨김과 취소선을 확인했다. 대용량 목록의 불필요한 행 생성은 막지만, 모든 구간의 최대 응답 지연 100ms는 여전히 보장하지 않는다.
 
 최종 Debug 빌드 경고·오류 0개, 기능·화면 회귀 223개, Release 성능 검사 14개를 통과했다.
+
+## Single Load 구조 편집 검증 (2026-10-19)
+
+Single Load는 구조 편집을 백그라운드에서 준비하고, 확인과 취소 검사를 거쳐 한 번에 반영한다. 배열 내부 멤버의 변경은 모든 대응 원소에 적용하지만, 표시 행 모델은 화면에 필요한 항목만 생성한다. 표시 순서와 ID 인덱스를 백그라운드에서 준비하며, 스크롤 위치 조회는 전체 목록 순회 없이 인덱스로 접근한다.
+
+새 행의 입력 상태를 먼저 지우면 WPF가 이전 목록의 임시 행을 조회하면서 오류가 발생했다. 표시 목록은 교체가 끝날 때까지 임시 행 참조를 유지하도록 수정했다. 화면에서 한 행만 추가·삭제·교체되는 경우에는 전체 목록 Reset 대신 해당 변경만 알린다. 입력 취소 작업 자체를 중단하더라도 입력 내용과 표시 행이 함께 유지된다.
+
+검증에는 추가·이름 변경·타입 변경·삭제·복구·실행 취소·작업 취소, 기존 값 보존과 선택 유지가 포함된다. 실제 WPF 창에서 Enter 적용과 우클릭 복구, 타입 크기 미리보기, 최소 창 크기를 검사한다. 렌더 결과는 `ShmViewer/obj/render-qa/single-load-*.png`, 실행 결과는 `ShmViewer/obj/test-results/`에 생성한다.
+
+로컬 확인용 `TestHeaders/SingleLoad`의 기본 샘플 및 2만·10만 원소 DAT·구조 파일 3쌍은 헤더의 Clang 배치와 예상 값의 일치를 검사한다. 샘플을 복사해 사용하는 절차와 재생성 명령은 해당 폴더의 README에 있다.
+
+다음은 실제 WPF 창의 최종 Release 검사 1회 측정이다. 로드부터 작업 완료까지의 시간에는 렌더링·GC·스케줄링이 포함되며 사용자 확인 대기 시간은 제외한다.
+
+| 배열 원소 | 로드 | 전체 대응 멤버 이름 변경 | 멤버 추가 | 타입 변경 | UI 목록 반영 최대 | 캐시된 행 모델 | Dispatcher p95 / 최대 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 20,000 | 567.4 ms | 766.2 ms | 735.8 ms | 854.2 ms | 23.2 ms | 30 | 197.3 / 773.3 ms |
+| 100,000 | 1,335.4 ms | 1,484.7 ms | 2,055.9 ms | 2,384.0 ms | 30.6 ms | 30 | 92.3 / 767.7 ms |
+
+UI 목록 반영은 100ms 기준을 통과했지만 전체 작업의 모든 응답 간격이 100ms 이하인 것은 아니다. 대용량 구조 변경은 수 초 걸릴 수 있으며 GC와 렌더링 등을 포함한 순간 지연도 남아 있다. 초기 검증에서 전체 목록 Reset이 포함된 2만 원소 반영은 151.9ms였고, 한 행 변경 통지 적용 후 위 수치를 확인했다.
+
+최종 Debug 기능·화면 회귀 250개가 통과했다. Release에서는 기존 성능 검사 14개를 통과했고, Single Load 목록 갱신 수정 후 해당 대용량 검사 2개와 실제 화면 검사 1개를 다시 통과했다.
+
+~~~powershell
+dotnet test ShmViewer.Tests/ShmViewer.Tests.csproj -c Debug --filter "Category!=Performance"
+dotnet test ShmViewer.Tests/ShmViewer.Tests.csproj -c Release --filter "FullyQualifiedName~SingleLoadLargeArrayKeepsRowsVirtualAndPreservesValues" --logger "console;verbosity=detailed"
+~~~

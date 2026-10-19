@@ -140,7 +140,7 @@ public sealed class DatFileStoreTests
     }
 
     [Fact]
-    public void LoadOnlySaveBacksUpAndUndoRestoresDirtyState()
+    public void SingleLoadSaveBacksUpAndUndoRestoresDirtyState()
     {
         using var files = new Files();
         var doc = files.Write("a.dat", Document("struct Root { unsigned int a:3; unsigned int b:5; };", ("b", "17")));

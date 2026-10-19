@@ -1,0 +1,121 @@
+{
+  "FormatVersion": 1,
+  "StructName": "SingleLoad100000",
+  "DataLength": 800004,
+  "DataSha256": "9610DA87C57A6312A7B73C9F4972B52CECBB7E15DC694C0F96C06AA6E6B7F202",
+  "Root": {
+    "Name": "SingleLoad100000",
+    "Kind": 9,
+    "Size": 800004,
+    "Alignment": 4,
+    "Pack": 8,
+    "ExplicitAlignment": 0,
+    "IsUnsigned": false,
+    "Count": 0,
+    "Element": null,
+    "Members": [
+      {
+        "Name": "items",
+        "Type": {
+          "Name": "LargeItem[100000]",
+          "Kind": 11,
+          "Size": 800000,
+          "Alignment": 4,
+          "Pack": 8,
+          "ExplicitAlignment": 0,
+          "IsUnsigned": false,
+          "Count": 100000,
+          "Element": {
+            "Name": "LargeItem",
+            "Kind": 9,
+            "Size": 8,
+            "Alignment": 4,
+            "Pack": 8,
+            "ExplicitAlignment": 0,
+            "IsUnsigned": false,
+            "Count": 0,
+            "Element": null,
+            "Members": [
+              {
+                "Name": "value",
+                "Type": {
+                  "Name": "int",
+                  "Kind": 0,
+                  "Size": 4,
+                  "Alignment": 4,
+                  "Pack": 8,
+                  "ExplicitAlignment": 0,
+                  "IsUnsigned": false,
+                  "Count": 0,
+                  "Element": null,
+                  "Members": [],
+                  "EnumValues": {}
+                },
+                "Offset": 0,
+                "BitOffset": 0,
+                "BitWidth": 0,
+                "IsAnonymous": false,
+                "IsPadding": false,
+                "ExplicitAlignment": 0
+              },
+              {
+                "Name": "spare",
+                "Type": {
+                  "Name": "short",
+                  "Kind": 0,
+                  "Size": 2,
+                  "Alignment": 2,
+                  "Pack": 8,
+                  "ExplicitAlignment": 0,
+                  "IsUnsigned": false,
+                  "Count": 0,
+                  "Element": null,
+                  "Members": [],
+                  "EnumValues": {}
+                },
+                "Offset": 4,
+                "BitOffset": 0,
+                "BitWidth": 0,
+                "IsAnonymous": false,
+                "IsPadding": false,
+                "ExplicitAlignment": 0
+              }
+            ],
+            "EnumValues": {}
+          },
+          "Members": [],
+          "EnumValues": {}
+        },
+        "Offset": 0,
+        "BitOffset": 0,
+        "BitWidth": 0,
+        "IsAnonymous": false,
+        "IsPadding": false,
+        "ExplicitAlignment": 0
+      },
+      {
+        "Name": "tail",
+        "Type": {
+          "Name": "long",
+          "Kind": 0,
+          "Size": 4,
+          "Alignment": 4,
+          "Pack": 8,
+          "ExplicitAlignment": 0,
+          "IsUnsigned": false,
+          "Count": 0,
+          "Element": null,
+          "Members": [],
+          "EnumValues": {}
+        },
+        "Offset": 800000,
+        "BitOffset": 0,
+        "BitWidth": 0,
+        "IsAnonymous": false,
+        "IsPadding": false,
+        "ExplicitAlignment": 0
+      }
+    ],
+    "EnumValues": {}
+  }
+}

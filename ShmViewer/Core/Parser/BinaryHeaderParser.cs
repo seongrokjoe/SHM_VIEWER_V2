@@ -13,7 +13,7 @@ internal sealed class BinaryHeaderParser
     private readonly HashSet<string> _building = new(StringComparer.Ordinal);
     private readonly List<(CXCursor Cursor, BinaryType Type)> _records = new();
 
-    public unsafe BinarySchema Parse(IEnumerable<string> headers, string structName, HeaderParseOptions options)
+    public unsafe BinarySchema Parse(IEnumerable<string> headers, string structName, HeaderParseOptions options, ICollection<string>? availableTypes = null)
     {
         if (options.Pack is not (1 or 2 or 4 or 8 or 16)) throw new InvalidDataException("Pack은 1, 2, 4, 8, 16 중 하나여야 합니다.");
         var paths = headers.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -47,6 +47,9 @@ internal sealed class BinaryHeaderParser
                 {
                     var name = child.Spelling.ToString();
                     var fullName = string.IsNullOrEmpty(scope) ? name : scope + "::" + name;
+                    if (availableTypes != null && name.Length > 0 && !name.StartsWith("__SingleLoad", StringComparison.Ordinal) &&
+                        child.Kind is CXCursorKind.CXCursor_StructDecl or CXCursorKind.CXCursor_ClassDecl or CXCursorKind.CXCursor_UnionDecl or CXCursorKind.CXCursor_EnumDecl or CXCursorKind.CXCursor_TypedefDecl or CXCursorKind.CXCursor_TypeAliasDecl && child.Type.SizeOf > 0)
+                        availableTypes.Add(fullName);
                     if ((fullName == requested || name == requested && !requested.Contains("::")) &&
                         child.Kind is CXCursorKind.CXCursor_StructDecl or CXCursorKind.CXCursor_UnionDecl or CXCursorKind.CXCursor_ClassDecl or CXCursorKind.CXCursor_TypedefDecl or CXCursorKind.CXCursor_TypeAliasDecl)
                     {
@@ -59,6 +62,7 @@ internal sealed class BinaryHeaderParser
                     }
                     if (child.Kind == CXCursorKind.CXCursor_Namespace) Find(child, fullName);
                     else if (child.Kind == CXCursorKind.CXCursor_LinkageSpec) Find(child, scope);
+                    else if (name.Length > 0 && child.Kind is CXCursorKind.CXCursor_StructDecl or CXCursorKind.CXCursor_UnionDecl or CXCursorKind.CXCursor_ClassDecl) Find(child, fullName);
                 }
             }
             Find(tu.Cursor, string.Empty);

@@ -20,12 +20,16 @@ public partial class DatDiffView : UserControl
             {
                 _viewModel.ScrollRequested -= ScrollTo; _viewModel.ViewResetRequested -= ResetView;
                 _viewModel.RowsUpdating -= CaptureGridState; _viewModel.RowsUpdated -= RestoreGridState;
+                _viewModel.ViewerRowsUpdating -= CaptureViewerState; _viewModel.ViewerRowsUpdated -= RestoreViewerState;
+                _viewModel.ViewerScrollRequested -= ScrollViewerTo;
             }
             _viewModel = DataContext as DatDiffViewModel;
             if (_viewModel != null)
             {
                 _viewModel.ScrollRequested += ScrollTo; _viewModel.ViewResetRequested += ResetView;
                 _viewModel.RowsUpdating += CaptureGridState; _viewModel.RowsUpdated += RestoreGridState;
+                _viewModel.ViewerRowsUpdating += CaptureViewerState; _viewModel.ViewerRowsUpdated += RestoreViewerState;
+                _viewModel.ViewerScrollRequested += ScrollViewerTo;
             }
             BindViewerColumns();
         };
@@ -97,6 +101,20 @@ public partial class DatDiffView : UserControl
     private async void ViewerGrid_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (_viewModel == null) return;
+        if (_viewModel.HasSingleInput && e.Key is Key.Enter or Key.Escape)
+        {
+            e.Handled = true;
+            if (e.Key == Key.Enter) await _viewModel.ApplySingleInputCommand.ExecuteAsync(null);
+            else await _viewModel.CancelSingleInputCommand.ExecuteAsync(null);
+            return;
+        }
+        if (Keyboard.Modifiers == ModifierKeys.None && !IsTextInput(e.OriginalSource as DependencyObject))
+        {
+            if (e.Key == Key.Insert && _viewModel.AddSingleCommand.CanExecute("after"))
+            { e.Handled = true; await _viewModel.AddSingleCommand.ExecuteAsync("after"); return; }
+            if (e.Key == Key.Delete && _viewModel.DeleteSingleCommand.CanExecute(null))
+            { e.Handled = true; await _viewModel.DeleteSingleCommand.ExecuteAsync(null); return; }
+        }
         if (e.Key == Key.F2 && ViewerGrid.SelectedItem is IDatValueRow row)
             e.Handled = await row.Owner.BeginCellEditAsync(row);
         else e.Handled = HandleShortcut(e.Key, Keyboard.Modifiers, e.OriginalSource as DependencyObject);
@@ -134,14 +152,14 @@ public partial class DatDiffView : UserControl
         foreach (var column in ComparisonGrid.Columns.Where((_, index) => index != 1))
             BindingOperations.SetBinding(column, DataGridColumn.MinWidthProperty,
                 new Binding(nameof(DatDiffViewModel.ComparisonColumnMinWidth)) { Source = _viewModel });
-        for (var i = 0; i < ViewerGrid.Columns.Count; i++)
+        for (var i = 0; i < ColumnProperties.Length; i++)
             BindingOperations.SetBinding(ViewerGrid.Columns[i], DataGridColumn.VisibilityProperty,
                 new Binding(ColumnProperties[i]) { Source = _viewModel, Converter = BoolToVisConverter.Instance });
     }
     private void Columns_Click(object sender, RoutedEventArgs e)
     {
         var menu = new ContextMenu();
-        for (var i = 0; i < ViewerGrid.Columns.Count; i++)
+        for (var i = 0; i < ColumnProperties.Length; i++)
         {
             var item = new MenuItem { Header = ViewerGrid.Columns[i].Header, IsCheckable = true, StaysOpenOnClick = true };
             item.SetBinding(MenuItem.IsCheckedProperty, new Binding(ColumnProperties[i]) { Source = _viewModel, Mode = BindingMode.TwoWay });

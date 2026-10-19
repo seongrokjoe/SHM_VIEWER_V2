@@ -151,9 +151,12 @@ public partial class DatInputViewModel : ObservableObject
         if (Headers.Count == 0 || string.IsNullOrWhiteSpace(StructName)) throw new InvalidDataException(Label + ": 헤더와 Struct를 지정하세요.");
         var missing = Headers.Where(h => !h.IsAvailable).Select(h => h.Path).ToArray();
         if (missing.Length > 0) throw new InvalidDataException(Label + ": 누락되거나 읽을 수 없는 헤더:\n" + string.Join("\n", missing));
+        return new(Label, Headers.Select(h => h.Path).ToArray(), DatPath.Trim(), StructName.Trim(), ReferenceOptions());
+    }
+    public HeaderParseOptions ReferenceOptions()
+    {
         if (!int.TryParse(Pack, out var pack)) throw new InvalidDataException(Label + ": Pack은 정수로 입력하세요.");
         string[] Lines(string text) => text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return new(Label, Headers.Select(h => h.Path).ToArray(), DatPath.Trim(), StructName.Trim(),
-            new() { StrictBinaryLayout = true, Pack = pack, IncludeDirectories = Lines(IncludeDirectories), Defines = Lines(Defines) });
+        return new() { StrictBinaryLayout = true, Pack = pack, IncludeDirectories = Lines(IncludeDirectories), Defines = Lines(Defines) };
     }
 }

@@ -45,7 +45,7 @@ public partial class DatDiffViewModel
     private void RefreshRealizedRows() { foreach (var row in _realizedRows.ToArray()) row.Refresh(); }
     private void RefreshRealizedInteraction() { foreach (var row in _realizedRows.ToArray()) row.RefreshInteraction(); }
     private void RefreshValueFormatting()
-    { foreach (var row in _realizedRows.ToArray()) row.RefreshValue(); foreach (var row in ViewerRows) row.RefreshValue(); }
+    { foreach (var row in _realizedRows.ToArray()) row.RefreshValue(); foreach (var row in ViewerRows.Realized.ToArray()) row.RefreshValue(); }
     private void ClearComparisonRows()
     {
         _realizedRows.Clear(); _displayRoot = null; _displayNodes = new(StringComparer.Ordinal); _rowCache = new(StringComparer.Ordinal);

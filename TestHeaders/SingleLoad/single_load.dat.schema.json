@@ -1,0 +1,372 @@
+{
+  "FormatVersion": 1,
+  "StructName": "SingleLoadSample",
+  "DataLength": 192,
+  "DataSha256": "5F9D9F3AAAE89C43729B632FCE9BDEC0F38EC77FF4FE6B74E5A8EC28AD53C562",
+  "Root": {
+    "Name": "SingleLoadSample",
+    "Kind": 9,
+    "Size": 192,
+    "Alignment": 8,
+    "Pack": 8,
+    "ExplicitAlignment": 0,
+    "IsUnsigned": false,
+    "Count": 0,
+    "Element": null,
+    "Members": [
+      {
+        "Name": "revision",
+        "Type": {
+          "Name": "int",
+          "Kind": 0,
+          "Size": 4,
+          "Alignment": 4,
+          "Pack": 8,
+          "ExplicitAlignment": 0,
+          "IsUnsigned": false,
+          "Count": 0,
+          "Element": null,
+          "Members": [],
+          "EnumValues": {}
+        },
+        "Offset": 0,
+        "BitOffset": 0,
+        "BitWidth": 0,
+        "IsAnonymous": false,
+        "IsPadding": false,
+        "ExplicitAlignment": 0
+      },
+      {
+        "Name": "title",
+        "Type": {
+          "Name": "char[20]",
+          "Kind": 11,
+          "Size": 20,
+          "Alignment": 1,
+          "Pack": 8,
+          "ExplicitAlignment": 0,
+          "IsUnsigned": false,
+          "Count": 20,
+          "Element": {
+            "Name": "char",
+            "Kind": 5,
+            "Size": 1,
+            "Alignment": 1,
+            "Pack": 8,
+            "ExplicitAlignment": 0,
+            "IsUnsigned": false,
+            "Count": 0,
+            "Element": null,
+            "Members": [],
+            "EnumValues": {}
+          },
+          "Members": [],
+          "EnumValues": {}
+        },
+        "Offset": 4,
+        "BitOffset": 0,
+        "BitWidth": 0,
+        "IsAnonymous": false,
+        "IsPadding": false,
+        "ExplicitAlignment": 0
+      },
+      {
+        "Name": "mode",
+        "Type": {
+          "Name": "SampleMode",
+          "Kind": 8,
+          "Size": 2,
+          "Alignment": 2,
+          "Pack": 8,
+          "ExplicitAlignment": 0,
+          "IsUnsigned": true,
+          "Count": 0,
+          "Element": null,
+          "Members": [],
+          "EnumValues": {
+            "Idle": "0",
+            "Ready": "1",
+            "Running": "2"
+          }
+        },
+        "Offset": 24,
+        "BitOffset": 0,
+        "BitWidth": 0,
+        "IsAnonymous": false,
+        "IsPadding": false,
+        "ExplicitAlignment": 0
+      },
+      {
+        "Name": "items",
+        "Type": {
+          "Name": "SampleItem[3]",
+          "Kind": 11,
+          "Size": 120,
+          "Alignment": 8,
+          "Pack": 8,
+          "ExplicitAlignment": 0,
+          "IsUnsigned": false,
+          "Count": 3,
+          "Element": {
+            "Name": "SampleItem",
+            "Kind": 9,
+            "Size": 40,
+            "Alignment": 8,
+            "Pack": 8,
+            "ExplicitAlignment": 0,
+            "IsUnsigned": false,
+            "Count": 0,
+            "Element": null,
+            "Members": [
+              {
+                "Name": "nSpare",
+                "Type": {
+                  "Name": "short",
+                  "Kind": 0,
+                  "Size": 2,
+                  "Alignment": 2,
+                  "Pack": 8,
+                  "ExplicitAlignment": 0,
+                  "IsUnsigned": false,
+                  "Count": 0,
+                  "Element": null,
+                  "Members": [],
+                  "EnumValues": {}
+                },
+                "Offset": 0,
+                "BitOffset": 0,
+                "BitWidth": 0,
+                "IsAnonymous": false,
+                "IsPadding": false,
+                "ExplicitAlignment": 0
+              },
+              {
+                "Name": "quantity",
+                "Type": {
+                  "Name": "int",
+                  "Kind": 0,
+                  "Size": 4,
+                  "Alignment": 4,
+                  "Pack": 8,
+                  "ExplicitAlignment": 0,
+                  "IsUnsigned": false,
+                  "Count": 0,
+                  "Element": null,
+                  "Members": [],
+                  "EnumValues": {}
+                },
+                "Offset": 4,
+                "BitOffset": 0,
+                "BitWidth": 0,
+                "IsAnonymous": false,
+                "IsPadding": false,
+                "ExplicitAlignment": 0
+              },
+              {
+                "Name": "price",
+                "Type": {
+                  "Name": "double",
+                  "Kind": 3,
+                  "Size": 8,
+                  "Alignment": 8,
+                  "Pack": 8,
+                  "ExplicitAlignment": 0,
+                  "IsUnsigned": false,
+                  "Count": 0,
+                  "Element": null,
+                  "Members": [],
+                  "EnumValues": {}
+                },
+                "Offset": 8,
+                "BitOffset": 0,
+                "BitWidth": 0,
+                "IsAnonymous": false,
+                "IsPadding": false,
+                "ExplicitAlignment": 0
+              },
+              {
+                "Name": "label",
+                "Type": {
+                  "Name": "char[20]",
+                  "Kind": 11,
+                  "Size": 20,
+                  "Alignment": 1,
+                  "Pack": 8,
+                  "ExplicitAlignment": 0,
+                  "IsUnsigned": false,
+                  "Count": 20,
+                  "Element": {
+                    "Name": "char",
+                    "Kind": 5,
+                    "Size": 1,
+                    "Alignment": 1,
+                    "Pack": 8,
+                    "ExplicitAlignment": 0,
+                    "IsUnsigned": false,
+                    "Count": 0,
+                    "Element": null,
+                    "Members": [],
+                    "EnumValues": {}
+                  },
+                  "Members": [],
+                  "EnumValues": {}
+                },
+                "Offset": 16,
+                "BitOffset": 0,
+                "BitWidth": 0,
+                "IsAnonymous": false,
+                "IsPadding": false,
+                "ExplicitAlignment": 0
+              }
+            ],
+            "EnumValues": {}
+          },
+          "Members": [],
+          "EnumValues": {}
+        },
+        "Offset": 32,
+        "BitOffset": 0,
+        "BitWidth": 0,
+        "IsAnonymous": false,
+        "IsPadding": false,
+        "ExplicitAlignment": 0
+      },
+      {
+        "Name": "matrix",
+        "Type": {
+          "Name": "int[2][3]",
+          "Kind": 11,
+          "Size": 24,
+          "Alignment": 4,
+          "Pack": 8,
+          "ExplicitAlignment": 0,
+          "IsUnsigned": false,
+          "Count": 2,
+          "Element": {
+            "Name": "int[3]",
+            "Kind": 11,
+            "Size": 12,
+            "Alignment": 4,
+            "Pack": 8,
+            "ExplicitAlignment": 0,
+            "IsUnsigned": false,
+            "Count": 3,
+            "Element": {
+              "Name": "int",
+              "Kind": 0,
+              "Size": 4,
+              "Alignment": 4,
+              "Pack": 8,
+              "ExplicitAlignment": 0,
+              "IsUnsigned": false,
+              "Count": 0,
+              "Element": null,
+              "Members": [],
+              "EnumValues": {}
+            },
+            "Members": [],
+            "EnumValues": {}
+          },
+          "Members": [],
+          "EnumValues": {}
+        },
+        "Offset": 152,
+        "BitOffset": 0,
+        "BitWidth": 0,
+        "IsAnonymous": false,
+        "IsPadding": false,
+        "ExplicitAlignment": 0
+      },
+      {
+        "Name": "settings",
+        "Type": {
+          "Name": "PackedSettings",
+          "Kind": 9,
+          "Size": 5,
+          "Alignment": 1,
+          "Pack": 1,
+          "ExplicitAlignment": 0,
+          "IsUnsigned": false,
+          "Count": 0,
+          "Element": null,
+          "Members": [
+            {
+              "Name": "enabled",
+              "Type": {
+                "Name": "char",
+                "Kind": 5,
+                "Size": 1,
+                "Alignment": 1,
+                "Pack": 8,
+                "ExplicitAlignment": 0,
+                "IsUnsigned": false,
+                "Count": 0,
+                "Element": null,
+                "Members": [],
+                "EnumValues": {}
+              },
+              "Offset": 0,
+              "BitOffset": 0,
+              "BitWidth": 0,
+              "IsAnonymous": false,
+              "IsPadding": false,
+              "ExplicitAlignment": 0
+            },
+            {
+              "Name": "timeout",
+              "Type": {
+                "Name": "long",
+                "Kind": 0,
+                "Size": 4,
+                "Alignment": 4,
+                "Pack": 8,
+                "ExplicitAlignment": 0,
+                "IsUnsigned": false,
+                "Count": 0,
+                "Element": null,
+                "Members": [],
+                "EnumValues": {}
+              },
+              "Offset": 1,
+              "BitOffset": 0,
+              "BitWidth": 0,
+              "IsAnonymous": false,
+              "IsPadding": false,
+              "ExplicitAlignment": 0
+            }
+          ],
+          "EnumValues": {}
+        },
+        "Offset": 176,
+        "BitOffset": 0,
+        "BitWidth": 0,
+        "IsAnonymous": false,
+        "IsPadding": false,
+        "ExplicitAlignment": 0
+      },
+      {
+        "Name": "tail",
+        "Type": {
+          "Name": "long",
+          "Kind": 0,
+          "Size": 4,
+          "Alignment": 4,
+          "Pack": 8,
+          "ExplicitAlignment": 0,
+          "IsUnsigned": false,
+          "Count": 0,
+          "Element": null,
+          "Members": [],
+          "EnumValues": {}
+        },
+        "Offset": 184,
+        "BitOffset": 0,
+        "BitWidth": 0,
+        "IsAnonymous": false,
+        "IsPadding": false,
+        "ExplicitAlignment": 0
+      }
+    ],
+    "EnumValues": {}
+  }
+}

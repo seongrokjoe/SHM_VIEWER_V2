@@ -12,8 +12,8 @@
     <StackPanel Orientation="Horizontal" Margin="12,8,8,0">
      <RadioButton x:Name="RunDataOption" Content="Run Data" GroupName="DatKind" IsChecked="{Binding IsRunData}" Foreground="#EEE" Margin="0,0,18,0"/>
      <RadioButton x:Name="InitDataOption" Content="Init Data" GroupName="DatKind" IsChecked="{Binding IsInitData}" Foreground="#EEE"/>
-     <CheckBox x:Name="LoadOnlyOption" Content="Load Only" IsChecked="{Binding LoadOnly}" Foreground="#9CDCFE" FontWeight="Bold" Margin="24,0,16,0" Focusable="False"/>
-     <StackPanel Orientation="Horizontal" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}">
+     <CheckBox x:Name="SingleLoadOption" Content="Single Load" IsChecked="{Binding SingleLoad}" Foreground="#9CDCFE" FontWeight="Bold" Margin="24,0,16,0" Focusable="False"/>
+     <StackPanel Orientation="Horizontal" Visibility="{Binding SingleLoad, Converter={x:Static local:BoolToVisConverter.Instance}}">
       <TextBlock Text="조회 대상: " />
       <RadioButton x:Name="ViewerLeftOption" Content="버전1" GroupName="ViewerSource" IsChecked="{Binding ViewerLeftOption}" Foreground="#EEE"/>
       <RadioButton x:Name="ViewerRightOption" Content="버전2" GroupName="ViewerSource" IsChecked="{Binding ViewerUsesRight}" Foreground="#EEE"/>
@@ -34,7 +34,7 @@
       <TextBlock Text="{Binding RightSummary}" Foreground="#98E5BB" TextWrapping="Wrap"/>
      </DockPanel>
     </Grid>
-    <TextBlock Text="{Binding ViewerSummary}" ToolTip="{Binding ViewerSummary}" Foreground="#9CDCFE" TextTrimming="CharacterEllipsis" Margin="10,0,10,7" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+    <TextBlock Text="{Binding ViewerSummary}" ToolTip="{Binding ViewerSummary}" Foreground="#9CDCFE" TextTrimming="CharacterEllipsis" Margin="10,0,10,7" Visibility="{Binding SingleLoad, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
    </StackPanel>
   </ScrollViewer>
   <WrapPanel Grid.Row="1" Margin="8,2,8,6">
@@ -57,13 +57,23 @@
    <StackPanel Orientation="Horizontal">
    <Button Content="실행 취소" Command="{Binding UndoCommand}" Margin="0,0,4,0"/>
    <Button Content="다시 실행" Command="{Binding RedoCommand}" Margin="0,0,12,0"/>
-   <Button Content="{Binding SaveLabel}" Command="{Binding SaveCommand}" Style="{DynamicResource DarkBtn}" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+   <Button Content="{Binding SaveLabel}" Command="{Binding SaveCommand}" Style="{DynamicResource DarkBtn}" Visibility="{Binding SingleLoad, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
    </StackPanel>
    <StackPanel Orientation="Horizontal" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
     <Button Content="← 버전2를 버전1에 적용" Command="{Binding UseRightCommand}" Margin="8,0,4,0"/>
     <Button Content="버전1을 버전2에 적용 →" Command="{Binding UseLeftCommand}"/>
    </StackPanel>
-   <Button Content="컬럼 표시 ▾" Click="Columns_Click" Margin="8,0,0,0" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+   <Button Content="컬럼 표시 ▾" Click="Columns_Click" Margin="8,0,0,0" Visibility="{Binding SingleLoad, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
+   <WrapPanel Visibility="{Binding SingleLoad, Converter={x:Static local:BoolToVisConverter.Instance}}" Margin="8,4,0,0">
+    <Button x:Name="AddSingleButton" Content="＋ 아래에 추가" Command="{Binding AddSingleCommand}" CommandParameter="after" ToolTip="선택한 멤버 다음에 추가 · Insert" Margin="0,0,4,0"/>
+    <Button Content="＋ 첫 하위 추가" Command="{Binding AddSingleCommand}" CommandParameter="inside" Margin="0,0,4,0"/>
+    <Button x:Name="DeleteSingleButton" Content="삭제" Command="{Binding DeleteSingleCommand}" Margin="0,0,4,0"/>
+    <Button x:Name="RestoreSingleButton" Content="복구" Command="{Binding RestoreSingleCommand}" Margin="0,0,12,0"/>
+    <StackPanel Orientation="Horizontal" Visibility="{Binding HasSingleInput, Converter={x:Static local:BoolToVisConverter.Instance}}" IsEnabled="{Binding CanInteract}">
+     <Button Content="입력 적용 ↵" Command="{Binding ApplySingleInputCommand}" Margin="0,0,4,0"/><Button Content="입력 취소 Esc" Command="{Binding CancelSingleInputCommand}" Margin="0,0,10,0"/>
+    </StackPanel>
+    <TextBlock Text="이름·타입 더블클릭 · 추가: 녹색 / 변경: 노란색 / 삭제: 취소선" FontSize="11" Foreground="#B5C5D4" VerticalAlignment="Center"/>
+   </WrapPanel>
   </WrapPanel>
   <DataGrid x:Name="ComparisonGrid" RowHeight="96" LoadingRow="ComparisonGrid_LoadingRow" UnloadingRow="ComparisonGrid_UnloadingRow" Grid.Row="2" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
    Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}"
@@ -123,19 +133,51 @@
     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
    </DataGrid.Columns>
   </DataGrid>
-  <DataGrid PreviewMouseWheel="Grid_PreviewMouseWheel" PreviewKeyDown="ViewerGrid_PreviewKeyDown" VirtualizingPanel.ScrollUnit="Item" x:Name="ViewerGrid" Grid.Row="2" ItemsSource="{Binding ViewerRows}" Visibility="{Binding LoadOnly, Converter={x:Static local:BoolToVisConverter.Instance}}"
+  <DataGrid PreviewMouseWheel="Grid_PreviewMouseWheel" PreviewKeyDown="ViewerGrid_PreviewKeyDown" VirtualizingPanel.ScrollUnit="Item" x:Name="ViewerGrid" Grid.Row="2" ItemsSource="{Binding ViewerRows}" Visibility="{Binding SingleLoad, Converter={x:Static local:BoolToVisConverter.Instance}}"
+   SelectedItem="{Binding SelectedViewerRow, Mode=TwoWay}" SelectionMode="Single" SelectionUnit="FullRow" RowHeight="34" LoadingRow="ViewerGrid_LoadingRow" UnloadingRow="ViewerGrid_UnloadingRow"
    IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="False"
    EnableRowVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"
-   Background="#20262D" Foreground="#EEEEEE" RowBackground="#242A32" AlternatingRowBackground="#29323C" BorderBrush="#607286" HeadersVisibility="Column" IsEnabled="{Binding CanInteract}">
+   Background="#20262D" Foreground="#EEEEEE" BorderBrush="#607286" HeadersVisibility="Column" IsEnabled="{Binding CanInteract}">
+   <DataGrid.ContextMenu>
+    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+     <MenuItem Header="아래에 추가" Command="{Binding AddSingleCommand}" CommandParameter="after"/>
+     <MenuItem Header="첫 하위 추가" Command="{Binding AddSingleCommand}" CommandParameter="inside"/>
+     <Separator/>
+     <MenuItem Header="이름 변경" Command="{Binding RenameSingleCommand}" CommandParameter="{Binding SelectedViewerRow}" IsEnabled="{Binding CanSingleEdit}"/>
+     <MenuItem Header="타입 변경" Command="{Binding ChangeSingleTypeCommand}" CommandParameter="{Binding SelectedViewerRow}" IsEnabled="{Binding CanSingleEdit}"/>
+     <Separator/>
+     <MenuItem Header="삭제" Command="{Binding DeleteSingleCommand}"/>
+     <MenuItem Header="복구" Command="{Binding RestoreSingleCommand}"/>
+    </ContextMenu>
+   </DataGrid.ContextMenu>
+   <DataGrid.RowStyle><Style TargetType="DataGridRow">
+    <Setter Property="Background" Value="{Binding Background}"/><Setter Property="ToolTip" Value="{Binding Hint}"/>
+    <EventSetter Event="PreviewMouseRightButtonDown" Handler="ViewerRow_PreviewMouseRightButtonDown"/>
+   </Style></DataGrid.RowStyle>
+   <DataGrid.CellStyle><Style TargetType="DataGridCell">
+    <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="#EEE"/><Setter Property="BorderBrush" Value="Transparent"/>
+    <Style.Triggers><Trigger Property="IsSelected" Value="True"><Setter Property="BorderBrush" Value="#9CDCFE"/><Setter Property="Background" Value="Transparent"/></Trigger></Style.Triggers>
+   </Style></DataGrid.CellStyle>
    <DataGrid.ColumnHeaderStyle><Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="#353941"/><Setter Property="Foreground" Value="#9CDCFE"/><Setter Property="Padding" Value="8,5"/></Style></DataGrid.ColumnHeaderStyle>
    <DataGrid.Columns>
     <DataGridTemplateColumn Header="이름 / 경로" Width="3*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
-     <DockPanel Margin="4" ToolTip="{Binding Path}"><Button Content="{Binding ToggleText}" Command="{Binding Owner.ToggleViewerCommand}" CommandParameter="{Binding}" Margin="{Binding Indent}" Width="22" Background="Transparent" Foreground="#DDD" BorderThickness="0"/><TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis"/></DockPanel>
+     <DockPanel Margin="4" ToolTip="{Binding Hint}">
+      <Button Content="{Binding ToggleText}" Command="{Binding Owner.ToggleViewerCommand}" CommandParameter="{Binding}" Margin="{Binding Indent}" Width="22" Background="Transparent" Foreground="#DDD" BorderThickness="0"/>
+      <Grid>
+       <TextBlock Text="{Binding Path}" TextDecorations="{Binding Decorations}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" MouseDown="SingleName_MouseDown">
+        <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding IsNameEditing}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+       </TextBlock>
+       <TextBox x:Name="SingleNameEditor" Text="{Binding Owner.SingleNameText, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="{Binding IsNameReadOnly}" Visibility="{Binding IsNameEditing, Converter={x:Static local:BoolToVisConverter.Instance}}" IsVisibleChanged="SingleNameEditor_IsVisibleChanged" Loaded="SingleNameEditor_Loaded" PreviewKeyDown="SingleNameEditor_PreviewKeyDown"/>
+      </Grid>
+     </DockPanel>
     </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-    <DataGridTextColumn Header="타입" Binding="{Binding TypeName}" Width="2*"/>
+    <DataGridTemplateColumn Header="타입 · 더블클릭" Width="2*"><DataGridTemplateColumn.CellTemplate><DataTemplate>
+     <Border Background="Transparent" MouseDown="SingleType_MouseDown" Padding="4"><TextBlock Text="{Binding TypeName}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/></Border>
+    </DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
     <DataGridTextColumn Header="오프셋" Binding="{Binding Offset}" Width="120"/>
     <DataGridTextColumn Header="크기" Binding="{Binding Size}" Width="90"/>
     <DataGridTemplateColumn Header="값" Width="3*"><DataGridTemplateColumn.CellTemplate><DataTemplate><views:DatValueCell Margin="4,2"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+    <DataGridTextColumn Header="상태" Binding="{Binding State}" Width="85"/>
    </DataGrid.Columns>
   </DataGrid>
   <Expander x:Name="AdvancedEditing" Grid.Row="3" Header="고급 편집" IsExpanded="{Binding AdvancedEditingExpanded}" Background="#282B30" Foreground="#DDD" Padding="8" Visibility="{Binding IsDiffMode, Converter={x:Static local:BoolToVisConverter.Instance}}">
@@ -158,6 +200,7 @@
    </StackPanel>
   </Expander>
   <StackPanel Grid.Row="4">
+   <TextBlock Text="{Binding SingleError}" Foreground="#FF8888" TextWrapping="Wrap" Margin="8,0"/>
    <ProgressBar Height="3" IsIndeterminate="True" Visibility="{Binding IsBusy, Converter={x:Static local:BoolToVisConverter.Instance}}"/>
    <TextBlock Text="{Binding EditorError}" Foreground="#FF8888" TextWrapping="Wrap" Margin="8,0"/>
    <DockPanel Margin="8,4" Visibility="{Binding HasCellEdit, Converter={x:Static local:BoolToVisConverter.Instance}}">

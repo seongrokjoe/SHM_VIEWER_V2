@@ -15,7 +15,7 @@ public partial class DatDiffViewModel
     public DatComparisonMode ComparisonMode => _comparisonMode;
     public bool StructureComparison => ComparisonMode == DatComparisonMode.StructureDifferences;
     public bool DifferencesOnly => ComparisonMode == DatComparisonMode.AllDifferences;
-    public bool CanChangeComparisonMode => CanInteract && !LoadOnly && !_changingComparisonMode;
+    public bool CanChangeComparisonMode => CanInteract && !SingleLoad && !_changingComparisonMode;
     public Func<DatModeChangeChoice> ConfirmModeChange { get; set; } = DatModeChangeDialog.Choose;
     public double ComparisonColumnMinWidth => Math.Max(240, _maxRowDepth * 14 + 210);
     [ObservableProperty] private bool _advancedEditingExpanded;

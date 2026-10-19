@@ -35,11 +35,11 @@ public sealed class DatWorkspaceTests
     }
 
     [Fact]
-    public async Task LoadOnlyValidatesOnlyChosenInputAndAllowsBackupSave()
+    public async Task SingleLoadValidatesOnlyChosenInputAndAllowsBackupSave()
     {
         using var setup = new Inputs(); var vm = setup.Model;
         vm.Right.DatPath = "missing.dat"; vm.Right.StructName = "Missing";
-        vm.LoadOnly = true; await vm.DiffCommand.ExecuteAsync(null);
+        vm.SingleLoad = true; await vm.DiffCommand.ExecuteAsync(null);
         Assert.NotNull(vm.ViewerDocument); Assert.Null(vm.Session); Assert.Empty(vm.Rows);
         Assert.Equal("10", vm.ViewerRows.Single(r => r.Path == "choice").Value);
         Assert.False(vm.UseLeftCommand.CanExecute(null)); Assert.True(vm.CanSave);
@@ -67,7 +67,7 @@ public sealed class DatWorkspaceTests
         await vm.SetComparisonModeAsync(DatComparisonMode.StructureDifferences); vm.ShowHex = true;
         Assert.True(vm.DifferencesOnly); Assert.False(vm.StructureComparison);
         Assert.Equal("invalid", vm.CellEditorText); Assert.Contains(vm.Rows, r => r.Node.Path == "choice");
-        setup.Confirm = false; vm.LoadOnly = true; Assert.False(vm.LoadOnly);
+        setup.Confirm = false; vm.SingleLoad = true; Assert.False(vm.SingleLoad);
         vm.CellEditorText = "123"; Assert.True(await vm.CommitCellEditAsync());
         Assert.True(vm.Session.Right.IsDirty); Assert.False(vm.Session.Left.IsDirty);
         vm.ShowHex = false;
@@ -103,7 +103,7 @@ public sealed class DatWorkspaceTests
         await vm.SaveLeftCommand.ExecuteAsync(null); Assert.Equal(1, notices); Assert.Contains("저장 실패", vm.Status);
         File.Delete(vm.Left.Headers[0].Path);
         vm.Left.UseSchemaFile = true;
-        vm.LoadOnly = true; await vm.DiffCommand.ExecuteAsync(null);
+        vm.SingleLoad = true; await vm.DiffCommand.ExecuteAsync(null);
         Assert.NotNull(vm.ViewerDocument); Assert.True(vm.ViewerDocument.LoadedFromSchema);
         Assert.Equal("88", vm.ViewerRows.Single(r => r.Path == "choice").Value);
     }
@@ -133,8 +133,8 @@ public sealed class DatWorkspaceTests
         using var setup = new Inputs(); var vm = setup.Model; await vm.DiffCommand.ExecuteAsync(null);
         vm.SelectedRow = vm.Rows.Single(r => r.Node.Path == "choice"); vm.EditorText = "123";
         setup.Confirm = false; var session = vm.Session;
-        vm.LoadOnly = true; vm.ResetCommand.Execute(null);
-        Assert.False(vm.LoadOnly); Assert.Same(session, vm.Session); Assert.Equal("123", vm.EditorText);
+        vm.SingleLoad = true; vm.ResetCommand.Execute(null);
+        Assert.False(vm.SingleLoad); Assert.Same(session, vm.Session); Assert.Equal("123", vm.EditorText);
         setup.Confirm = true; vm.ResetCommand.Execute(null);
         Assert.Null(vm.Session); Assert.Empty(vm.Rows); Assert.Empty(vm.Left.Headers);
         Assert.Empty(vm.Right.DatPath); Assert.False(vm.StructureComparison); Assert.True(vm.ActiveLeft);

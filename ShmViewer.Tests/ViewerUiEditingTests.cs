@@ -13,7 +13,7 @@ namespace ShmViewer.Tests;
 public sealed partial class ViewerUiTests
 {
     [Fact]
-    public Task LoadOnlyCellsColumnsWheelAndHeaderSelectionWorkInRenderedView() => RunSta(async () =>
+    public Task SingleLoadCellsColumnsWheelAndHeaderSelectionWorkInRenderedView() => RunSta(async () =>
     {
         using var setup = new DatWorkspaceTests.Inputs(); var diff = setup.Model;
         const string header = "struct Item { int x; int y; }; struct Root { Item items[80]; };";
@@ -25,13 +25,13 @@ public sealed partial class ViewerUiTests
         try
         {
             window.Show(); ((TabControl)window.FindName("WorkspaceTabs")).SelectedIndex = 1;
-            diff.LoadOnly = true; await diff.DiffCommand.ExecuteAsync(null);
+            diff.SingleLoad = true; await diff.DiffCommand.ExecuteAsync(null);
             var view = Find<DatDiffView>(window)!;
             var grid = (DataGrid)view.FindName("ViewerGrid");
-            diff.ToggleViewerCommand.Execute(diff.ViewerRows.Single(r => r.Path == "items"));
-            diff.ToggleViewerCommand.Execute(diff.ViewerRows.Single(r => r.Path == "items[0]"));
+            await diff.ToggleViewerCommand.ExecuteAsync(diff.ViewerRows.Single(r => r.Path == "items"));
+            await diff.ToggleViewerCommand.ExecuteAsync(diff.ViewerRows.Single(r => r.Path == "items[0]"));
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-            Assert.Equal(Visibility.Collapsed, grid.Columns[2].Visibility);
+            Assert.Equal(Visibility.Visible, grid.Columns[2].Visibility);
             diff.ShowViewerOffset = true;
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             Assert.Equal(Visibility.Visible, grid.Columns[2].Visibility);
@@ -52,10 +52,12 @@ public sealed partial class ViewerUiTests
             editor.Text = "99"; editor.GetBindingExpression(TextBox.TextProperty)!.UpdateSource();
             editor.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(editor), 0, Key.Enter)
                 { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+            Assert.True(await diff.CommitCellEditAsync());
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             Assert.False(diff.HasCellEdit);
             Assert.Equal("99", diff.ViewerRows.Single(r => r.Path == "items[0].x").Value);
-            Assert.Equal(data.Bytes.ToArray(), diff.ViewerDocument!.Bytes.ToArray());
+            Assert.Equal(diff.ViewerSession!.Bytes.ToArray(), diff.ViewerDocument!.Bytes.ToArray());
+            Assert.NotEqual(data.Bytes.ToArray(), diff.ViewerDocument.Bytes.ToArray());
             Assert.Equal(data.Bytes.Length, diff.ViewerSession!.Bytes.Length);
 
             var scroll = Find<ScrollViewer>(grid)!;
