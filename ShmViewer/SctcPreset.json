@@ -2,19 +2,19 @@
   "ApplicationDirectory": "D:\\K12_SCTC\\SCTCApplication",
   "HeaderGroups": [
     {
-      "Directory": "D:\\K12_SCTC\\SCTCApplication\\lib\\Internal\\common\\h",
+      "Directory": "D:\\K12_SCTC\\SCTCApplication\\lib\\internal\\common\\h",
       "Files": [
         "_DynCfg.h",
         "_enumdef.h",
         "_Recipe.h",
         "_Run.h",
-        "_StcCfg.h"
+        "_StcCfg.h",
+        "k12initial.h"
       ]
     },
     {
       "Directory": "D:\\K12_SCTC\\SCTCApplication\\src\\SMA\\SharedMemory_App",
       "Files": [
-        "K12Initial.h",
         "SharedMemory_App.h"
       ]
     }
@@ -50,8 +50,8 @@
     {
       "Kind": "Run",
       "Headers": [
-        "D:\\K12_SCTC\\SCTCApplication\\lib\\Internal\\common\\h\\_enumdef.h",
-        "D:\\K12_SCTC\\SCTCApplication\\lib\\Internal\\common\\h\\_Run.h"
+        "D:\\K12_SCTC\\SCTCApplication\\lib\\internal\\common\\h\\_enumdef.h",
+        "D:\\K12_SCTC\\SCTCApplication\\lib\\internal\\common\\h\\_Run.h"
       ],
       "DatPath": "D:\\K12_SCTC\\Resource\\CTC\\MEM_RUNDATA.DAT",
       "StructName": "tagRun"
@@ -59,8 +59,8 @@
     {
       "Kind": "Init",
       "Headers": [
-        "D:\\K12_SCTC\\SCTCApplication\\lib\\Internal\\common\\h\\_enumdef.h",
-        "D:\\K12_SCTC\\SCTCApplication\\src\\SMA\\SharedMemory_App\\K12Initial.h"
+        "D:\\K12_SCTC\\SCTCApplication\\lib\\internal\\common\\h\\_enumdef.h",
+        "D:\\K12_SCTC\\SCTCApplication\\lib\\internal\\common\\h\\k12initial.h"
       ],
       "DatPath": "D:\\K12_SCTC\\Resource\\CTC\\INIT_UNIT.DAT",
       "StructName": "tagUnitInitial"

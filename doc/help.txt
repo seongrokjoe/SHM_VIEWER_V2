@@ -337,10 +337,10 @@ Use SCTC를 체크하면 SCTC용 헤더 7개와 SHM 탭 5개를 준비합니다.
 기존 실시간 설정이 있으면 초기화하고 교체할지 확인하는 창이 나옵니다.
 
 기본 헤더 위치와 파일
-  D:\K12_SCTC\SCTCApplication\lib\Internal\common\h
-    _DynCfg.h, _enumdef.h, _Recipe.h, _Run.h, _StcCfg.h
+  D:\K12_SCTC\SCTCApplication\lib\internal\common\h
+    _DynCfg.h, _enumdef.h, _Recipe.h, _Run.h, _StcCfg.h, k12initial.h
   D:\K12_SCTC\SCTCApplication\src\SMA\SharedMemory_App
-    K12Initial.h, SharedMemory_App.h
+    SharedMemory_App.h
 
 기본 SHM Name / Struct
   RUNNING_SHARED_MEMORY       / tagRun
@@ -455,7 +455,7 @@ Run Data / Init Data는 Use SCTC Path를 켠 쪽의 프리셋 종류를 정합�
     Struct: tagRun
 
   Init Data 프리셋
-    헤더: _enumdef.h, K12Initial.h
+    헤더: _enumdef.h, k12initial.h
     DAT:  D:\K12_SCTC\Resource\CTC\INIT_UNIT.DAT
     Struct: tagUnitInitial
 

@@ -28,6 +28,10 @@ public sealed class PresetTests
         var recipe = Assert.Single(vm.HeaderFiles, f => f.Name == "_Recipe.h");
         Assert.Equal(Path.Combine(SctcPreset.Load().HeaderGroups[0].Directory, "_Recipe.h"), recipe.Path);
         Assert.Contains(recipe.Path, store.State.Headers);
+        var initial = Assert.Single(vm.HeaderFiles, f => f.Name == "k12initial.h");
+        var enumHeader = Assert.Single(vm.HeaderFiles, f => f.Name == "_enumdef.h");
+        Assert.Equal(Path.Combine(enumHeader.Directory, "k12initial.h"), initial.Path);
+        Assert.Contains(initial.Path, store.State.Headers);
         Assert.Equal("tagRun", vm.Tabs[0].StructName);
         Assert.DoesNotContain(vm.Tabs, t => t.ShmName == "OBJECT_INFO_MEMORY");
         Assert.True(store.State.UseDefaultSctcClean);
@@ -86,9 +90,12 @@ public sealed class PresetTests
         Assert.EndsWith("MEM_RUNDATA.DAT", vm.Left.DatPath);
         vm.IsInitData = true;
         Assert.Equal("tagUnitInitial", vm.Left.StructName); Assert.Equal("Custom", vm.Right.StructName);
-        Assert.Equal(new[] { "_enumdef.h", "K12Initial.h" }, vm.Left.Headers.Select(h => h.Name));
+        Assert.Equal(new[] { "_enumdef.h", "k12initial.h" }, vm.Left.Headers.Select(h => h.Name));
+        Assert.Equal(Path.Combine(vm.Left.Headers[0].Directory, "k12initial.h"), vm.Left.Headers[1].Path);
         Assert.EndsWith("INIT_UNIT.DAT", vm.Left.DatPath);
-        vm.Right.UseSctcPath = true; vm.Left.DatPath = "custom.dat";
+        vm.Right.UseSctcPath = true;
+        Assert.Equal(vm.Left.Headers.Select(h => h.Path), vm.Right.Headers.Select(h => h.Path));
+        vm.Left.DatPath = "custom.dat";
         Assert.False(vm.Left.UseSctcPath); Assert.True(vm.Right.UseSctcPath);
         vm.IsRunData = true;
         Assert.Equal("custom.dat", vm.Left.DatPath); Assert.Equal("tagRun", vm.Right.StructName);
