@@ -30,3 +30,9 @@ desktop.ini
 
 # Logs
 *.log
+
+# Local documentation
+*.md
+*.markdown
+*.mdx
+/doc/*.zip
